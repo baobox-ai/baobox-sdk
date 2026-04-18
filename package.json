@@ -1,15 +1,15 @@
 {
-  "name": "@skillbox/sdk",
+  "name": "@baobox/sdk",
   "version": "0.1.0",
-  "description": "TypeScript HTTP client for SkillBox — agent runtime + eval + observability.",
+  "description": "TypeScript HTTP client for Baobox — agent runtime + eval + observability.",
   "license": "MIT",
   "author": "Bright Qi <bright@adoptive.co>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/brightq/skillbox-sdk.git"
+    "url": "git+https://github.com/brightq/baobox-sdk.git"
   },
-  "homepage": "https://github.com/brightq/skillbox-sdk#readme",
-  "bugs": { "url": "https://github.com/brightq/skillbox-sdk/issues" },
+  "homepage": "https://github.com/brightq/baobox-sdk#readme",
+  "bugs": { "url": "https://github.com/brightq/baobox-sdk/issues" },
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -35,6 +35,6 @@
     "typescript": "^5.5.4",
     "vitest": "^2.1.4"
   },
-  "keywords": ["skillbox", "ai", "agent", "llm", "tool-calling", "sdk"],
+  "keywords": ["baobox", "ai", "agent", "llm", "tool-calling", "sdk"],
   "publishConfig": { "access": "public" }
 }

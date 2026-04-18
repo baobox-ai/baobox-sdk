@@ -2,10 +2,10 @@
 // Phase 1 covers the fields both the backend and the demo UI actually use.
 // Adding a field later is a non-breaking change; removing one is breaking.
 
-export type SkillBoxClientOptions = {
-  /** Full URL to the SkillBox worker, e.g. "https://skillbox-jv1.brightq.workers.dev" */
+export type BaoboxClientOptions = {
+  /** Full URL to the Baobox worker, e.g. "https://baobox-jv1.brightq.workers.dev" */
   endpoint: string;
-  /** API key issued by SkillBox admin. Hashes to one `api_keys` row. */
+  /** API key issued by Baobox admin. Hashes to one `api_keys` row. */
   apiKey: string;
   /** Optional tag for observability — not sent over the wire yet. */
   orgId?: string;
@@ -32,7 +32,7 @@ export type ChatResponse = {
   response: string;
   usage: { inputTokens: number; outputTokens: number };
   sessionId?: string;
-  /** Full SkillBox metadata envelope: request_id, latency, tool trace. */
+  /** Full Baobox metadata envelope: request_id, latency, tool trace. */
   meta: ResponseMeta;
 };
 

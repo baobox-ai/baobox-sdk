@@ -1,15 +1,15 @@
-# @skillbox/sdk
+# @baobox/sdk
 
-TypeScript HTTP client for [SkillBox](https://skillbox.au) — an AI integration platform providing an agent runtime, eval engine, and observability trail.
+TypeScript HTTP client for [Baobox](https://baobox.au) — an AI integration platform providing an agent runtime, eval engine, and observability trail.
 
-This package is a thin wrapper around SkillBox's REST API. It has zero business logic — all intelligence lives server-side. Making it public removes friction for partners and third-party users while keeping the runtime closed.
+This package is a thin wrapper around Baobox's REST API. It has zero business logic — all intelligence lives server-side. Making it public removes friction for partners and third-party users while keeping the runtime closed.
 
 ## Installation
 
 ```bash
-npm install @skillbox/sdk
+npm install @baobox/sdk
 # or
-pnpm add @skillbox/sdk
+pnpm add @baobox/sdk
 ```
 
 Requires Node.js 18+ (relies on native `fetch`).
@@ -17,11 +17,11 @@ Requires Node.js 18+ (relies on native `fetch`).
 ## Quick start
 
 ```typescript
-import { SkillBoxClient } from "@skillbox/sdk";
+import { BaoboxClient } from "@baobox/sdk";
 
-const sb = new SkillBoxClient({
-  endpoint: "https://skillbox-jv1.example.workers.dev",
-  apiKey: process.env.SKILLBOX_API_KEY!,
+const sb = new BaoboxClient({
+  endpoint: "https://baobox-jv1.example.workers.dev",
+  apiKey: process.env.BAOBOX_API_KEY!,
 });
 
 const res = await sb.chat({
@@ -85,15 +85,15 @@ const events = await sb.events.list({ sessionId: "ses_1", limit: 50 });
 
 ## Error handling
 
-Every non-2xx response throws `SkillBoxError`:
+Every non-2xx response throws `BaoboxError`:
 
 ```typescript
-import { SkillBoxError } from "@skillbox/sdk";
+import { BaoboxError } from "@baobox/sdk";
 
 try {
   await sb.chat({ skillId: "sk_missing", message: "..." });
 } catch (err) {
-  if (err instanceof SkillBoxError) {
+  if (err instanceof BaoboxError) {
     console.error(err.status);       // 404
     console.error(err.code);         // "SKILL_NOT_FOUND"
     console.error(err.requestId);    // server-side request id for log correlation
@@ -101,13 +101,13 @@ try {
 }
 ```
 
-Network failures surface as `SkillBoxError` with `status: 0` and `code: "NETWORK"`; timeouts as `code: "TIMEOUT"`.
+Network failures surface as `BaoboxError` with `status: 0` and `code: "NETWORK"`; timeouts as `code: "TIMEOUT"`.
 
 ## Configuration
 
 ```typescript
-new SkillBoxClient({
-  endpoint: "...",     // required — SkillBox worker URL
+new BaoboxClient({
+  endpoint: "...",     // required — Baobox worker URL
   apiKey: "...",       // required
   orgId: "firm_a",     // optional, observability tag
   fetch: myFetch,      // optional, injects custom fetch (tests / edge runtimes)
@@ -121,5 +121,5 @@ MIT. See [LICENSE](./LICENSE).
 
 ## Related
 
-- Tech Arch §4 — full SDK design rationale (SkillBox internal doc)
-- [Adoptive Co](https://adoptive.co) — consultancy using SkillBox as a delivery tool
+- Tech Arch §4 — full SDK design rationale (Baobox internal doc)
+- [Adoptive Co](https://adoptive.co) — consultancy using Baobox as a delivery tool

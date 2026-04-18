@@ -1,9 +1,9 @@
-// @skillbox/sdk — thin HTTP client for the SkillBox runtime.
+// @baobox/sdk — thin HTTP client for the Baobox runtime.
 // No business logic here — everything smart lives server-side. This file
 // is ~300 lines on purpose; if it grows past ~500, something that belongs
 // in the runtime has leaked out.
 
-import { SkillBoxError } from "./errors.js";
+import { BaoboxError } from "./errors.js";
 import type {
   ChatRequest,
   ChatResponse,
@@ -13,18 +13,18 @@ import type {
   Session,
   SessionMessage,
   Skill,
-  SkillBoxClientOptions,
+  BaoboxClientOptions,
   SkillUpsertRequest,
   Tool,
   ToolUpsertRequest,
 } from "./types.js";
 
-export { SkillBoxError } from "./errors.js";
+export { BaoboxError } from "./errors.js";
 export type * from "./types.js";
 
 type FetchFn = typeof globalThis.fetch;
 
-export class SkillBoxClient {
+export class BaoboxClient {
   private readonly endpoint: string;
   private readonly apiKey: string;
   private readonly fetch: FetchFn;
@@ -45,9 +45,9 @@ export class SkillBoxClient {
     list: (req: EventListRequest) => Promise<Event[]>;
   };
 
-  constructor(opts: SkillBoxClientOptions) {
-    if (!opts.endpoint) throw new Error("SkillBoxClient: endpoint required");
-    if (!opts.apiKey) throw new Error("SkillBoxClient: apiKey required");
+  constructor(opts: BaoboxClientOptions) {
+    if (!opts.endpoint) throw new Error("BaoboxClient: endpoint required");
+    if (!opts.apiKey) throw new Error("BaoboxClient: apiKey required");
     this.endpoint = opts.endpoint.replace(/\/+$/, "");
     this.apiKey = opts.apiKey;
     this.fetch = opts.fetch ?? globalThis.fetch;
@@ -263,7 +263,7 @@ export class SkillBoxClient {
     } catch (err) {
       const isAbort =
         err instanceof DOMException && err.name === "AbortError";
-      throw new SkillBoxError(
+      throw new BaoboxError(
         0,
         isAbort ? "TIMEOUT" : "NETWORK",
         isAbort
@@ -281,7 +281,7 @@ export class SkillBoxClient {
 
     if (!res.ok) {
       const errObj = (parsed as { error?: { code?: string; message?: string; request_id?: string } }).error;
-      throw new SkillBoxError(
+      throw new BaoboxError(
         res.status,
         errObj?.code ?? "HTTP_ERROR",
         errObj?.message ?? res.statusText,

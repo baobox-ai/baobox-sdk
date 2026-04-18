@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SkillBoxClient, SkillBoxError } from "../src/index.js";
+import { BaoboxClient, BaoboxError } from "../src/index.js";
 
 function fakeFetch(handler: (url: string, init: RequestInit) => Response) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -15,16 +15,16 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
-describe("SkillBoxClient constructor", () => {
+describe("BaoboxClient constructor", () => {
   it("rejects missing endpoint", () => {
     expect(
-      () => new SkillBoxClient({ endpoint: "", apiKey: "k" }),
+      () => new BaoboxClient({ endpoint: "", apiKey: "k" }),
     ).toThrowError(/endpoint required/);
   });
 
   it("rejects missing apiKey", () => {
     expect(
-      () => new SkillBoxClient({ endpoint: "https://x", apiKey: "" }),
+      () => new BaoboxClient({ endpoint: "https://x", apiKey: "" }),
     ).toThrowError(/apiKey required/);
   });
 
@@ -37,13 +37,13 @@ describe("SkillBoxClient constructor", () => {
         metadata: { request_id: "r_1", latency_ms: 5 },
       });
     });
-    const sb = new SkillBoxClient({
-      endpoint: "https://skillbox-jv1.example.com/",
+    const sb = new BaoboxClient({
+      endpoint: "https://baobox-jv1.example.com/",
       apiKey: "k",
       fetch,
     });
     await sb.chat({ skillId: "sk_1", message: "hi" });
-    expect(calls[0]).toBe("https://skillbox-jv1.example.com/api/v1/chat");
+    expect(calls[0]).toBe("https://baobox-jv1.example.com/api/v1/chat");
   });
 });
 
@@ -76,7 +76,7 @@ describe("chat", () => {
       });
     });
 
-    const sb = new SkillBoxClient({
+    const sb = new BaoboxClient({
       endpoint: "https://api.example.com",
       apiKey: "sk-123",
       fetch,
@@ -110,7 +110,7 @@ describe("chat", () => {
     });
   });
 
-  it("throws SkillBoxError with parsed code/message/request_id on 4xx", async () => {
+  it("throws BaoboxError with parsed code/message/request_id on 4xx", async () => {
     const fetch = fakeFetch(() =>
       jsonResponse(401, {
         error: {
@@ -120,7 +120,7 @@ describe("chat", () => {
         },
       }),
     );
-    const sb = new SkillBoxClient({
+    const sb = new BaoboxClient({
       endpoint: "https://api.example.com",
       apiKey: "wrong",
       fetch,
@@ -129,8 +129,8 @@ describe("chat", () => {
       await sb.chat({ skillId: "sk_1", message: "hi" });
       throw new Error("should have thrown");
     } catch (err) {
-      expect(err).toBeInstanceOf(SkillBoxError);
-      const e = err as SkillBoxError;
+      expect(err).toBeInstanceOf(BaoboxError);
+      const e = err as BaoboxError;
       expect(e.status).toBe(401);
       expect(e.code).toBe("UNAUTHORIZED");
       expect(e.message).toBe("Invalid API key");
@@ -153,7 +153,7 @@ describe("sessions", () => {
         metadata: { request_id: "r", latency_ms: 3 },
       }),
     );
-    const sb = new SkillBoxClient({
+    const sb = new BaoboxClient({
       endpoint: "https://api.example.com",
       apiKey: "k",
       fetch,
@@ -172,7 +172,7 @@ describe("events.list", () => {
       seenUrl = url;
       return jsonResponse(200, { data: [], metadata: { request_id: "r", latency_ms: 1 } });
     });
-    const sb = new SkillBoxClient({
+    const sb = new BaoboxClient({
       endpoint: "https://api.example.com",
       apiKey: "k",
       fetch,
@@ -193,7 +193,7 @@ describe("timeout", () => {
           reject(err);
         });
       });
-    const sb = new SkillBoxClient({
+    const sb = new BaoboxClient({
       endpoint: "https://api.example.com",
       apiKey: "k",
       fetch,
@@ -203,8 +203,8 @@ describe("timeout", () => {
       await sb.chat({ skillId: "sk_1", message: "hi" });
       throw new Error("should have thrown");
     } catch (err) {
-      expect(err).toBeInstanceOf(SkillBoxError);
-      expect((err as SkillBoxError).code).toBe("TIMEOUT");
+      expect(err).toBeInstanceOf(BaoboxError);
+      expect((err as BaoboxError).code).toBe("TIMEOUT");
     }
   });
 });
