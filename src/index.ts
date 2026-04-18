@@ -1,9 +1,9 @@
-// @baobox/sdk — thin HTTP client for the Baobox runtime.
+// @baobox/sdk — thin HTTP client for the BaoBox runtime.
 // No business logic here — everything smart lives server-side. This file
 // is ~300 lines on purpose; if it grows past ~500, something that belongs
 // in the runtime has leaked out.
 
-import { BaoboxError } from "./errors.js";
+import { BaoBoxError } from "./errors.js";
 import type {
   ChatRequest,
   ChatResponse,
@@ -13,26 +13,26 @@ import type {
   Session,
   SessionMessage,
   Skill,
-  BaoboxClientOptions,
+  BaoBoxClientOptions,
   SkillUpsertRequest,
   Tool,
   ToolUpsertRequest,
 } from "./types.js";
 
-export { BaoboxError } from "./errors.js";
+export { BaoBoxError } from "./errors.js";
 export type * from "./types.js";
 
 type FetchFn = typeof globalThis.fetch;
 
-export class BaoboxClient {
+export class BaoBoxClient {
   private readonly endpoint: string;
   private readonly apiKey: string;
   private readonly fetch: FetchFn;
   private readonly timeoutMs: number;
 
   // `admin` and `events` are pseudo-namespaces — just method bundles so
-  // call sites read as `sb.admin.skills.upsert(...)` rather than a flat
-  // `sb.upsertSkill(...)`. Matches Tech Arch §4.2.
+  // call sites read as `bb.admin.skills.upsert(...)` rather than a flat
+  // `bb.upsertSkill(...)`. Matches Tech Arch §4.2.
   public readonly admin: {
     skills: { upsert: (req: SkillUpsertRequest) => Promise<Skill> };
     tools: { upsert: (req: ToolUpsertRequest) => Promise<Tool> };
@@ -45,9 +45,9 @@ export class BaoboxClient {
     list: (req: EventListRequest) => Promise<Event[]>;
   };
 
-  constructor(opts: BaoboxClientOptions) {
-    if (!opts.endpoint) throw new Error("BaoboxClient: endpoint required");
-    if (!opts.apiKey) throw new Error("BaoboxClient: apiKey required");
+  constructor(opts: BaoBoxClientOptions) {
+    if (!opts.endpoint) throw new Error("BaoBoxClient: endpoint required");
+    if (!opts.apiKey) throw new Error("BaoBoxClient: apiKey required");
     this.endpoint = opts.endpoint.replace(/\/+$/, "");
     this.apiKey = opts.apiKey;
     this.fetch = opts.fetch ?? globalThis.fetch;
@@ -263,7 +263,7 @@ export class BaoboxClient {
     } catch (err) {
       const isAbort =
         err instanceof DOMException && err.name === "AbortError";
-      throw new BaoboxError(
+      throw new BaoBoxError(
         0,
         isAbort ? "TIMEOUT" : "NETWORK",
         isAbort
@@ -281,7 +281,7 @@ export class BaoboxClient {
 
     if (!res.ok) {
       const errObj = (parsed as { error?: { code?: string; message?: string; request_id?: string } }).error;
-      throw new BaoboxError(
+      throw new BaoBoxError(
         res.status,
         errObj?.code ?? "HTTP_ERROR",
         errObj?.message ?? res.statusText,

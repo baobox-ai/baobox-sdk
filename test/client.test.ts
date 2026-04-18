@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { BaoboxClient, BaoboxError } from "../src/index.js";
+import { BaoBoxClient, BaoBoxError } from "../src/index.js";
 
 function fakeFetch(handler: (url: string, init: RequestInit) => Response) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -15,16 +15,16 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
-describe("BaoboxClient constructor", () => {
+describe("BaoBoxClient constructor", () => {
   it("rejects missing endpoint", () => {
     expect(
-      () => new BaoboxClient({ endpoint: "", apiKey: "k" }),
+      () => new BaoBoxClient({ endpoint: "", apiKey: "k" }),
     ).toThrowError(/endpoint required/);
   });
 
   it("rejects missing apiKey", () => {
     expect(
-      () => new BaoboxClient({ endpoint: "https://x", apiKey: "" }),
+      () => new BaoBoxClient({ endpoint: "https://x", apiKey: "" }),
     ).toThrowError(/apiKey required/);
   });
 
@@ -37,12 +37,12 @@ describe("BaoboxClient constructor", () => {
         metadata: { request_id: "r_1", latency_ms: 5 },
       });
     });
-    const sb = new BaoboxClient({
+    const bb = new BaoBoxClient({
       endpoint: "https://baobox-jv1.example.com/",
       apiKey: "k",
       fetch,
     });
-    await sb.chat({ skillId: "sk_1", message: "hi" });
+    await bb.chat({ skillId: "sk_1", message: "hi" });
     expect(calls[0]).toBe("https://baobox-jv1.example.com/api/v1/chat");
   });
 });
@@ -76,13 +76,13 @@ describe("chat", () => {
       });
     });
 
-    const sb = new BaoboxClient({
+    const bb = new BaoBoxClient({
       endpoint: "https://api.example.com",
       apiKey: "sk-123",
       fetch,
     });
 
-    const r = await sb.chat({
+    const r = await bb.chat({
       skillId: "sk_chase",
       message: "chase cli_01",
       sessionId: "ses_1",
@@ -110,7 +110,7 @@ describe("chat", () => {
     });
   });
 
-  it("throws BaoboxError with parsed code/message/request_id on 4xx", async () => {
+  it("throws BaoBoxError with parsed code/message/request_id on 4xx", async () => {
     const fetch = fakeFetch(() =>
       jsonResponse(401, {
         error: {
@@ -120,17 +120,17 @@ describe("chat", () => {
         },
       }),
     );
-    const sb = new BaoboxClient({
+    const bb = new BaoBoxClient({
       endpoint: "https://api.example.com",
       apiKey: "wrong",
       fetch,
     });
     try {
-      await sb.chat({ skillId: "sk_1", message: "hi" });
+      await bb.chat({ skillId: "sk_1", message: "hi" });
       throw new Error("should have thrown");
     } catch (err) {
-      expect(err).toBeInstanceOf(BaoboxError);
-      const e = err as BaoboxError;
+      expect(err).toBeInstanceOf(BaoBoxError);
+      const e = err as BaoBoxError;
       expect(e.status).toBe(401);
       expect(e.code).toBe("UNAUTHORIZED");
       expect(e.message).toBe("Invalid API key");
@@ -153,12 +153,12 @@ describe("sessions", () => {
         metadata: { request_id: "r", latency_ms: 3 },
       }),
     );
-    const sb = new BaoboxClient({
+    const bb = new BaoBoxClient({
       endpoint: "https://api.example.com",
       apiKey: "k",
       fetch,
     });
-    const s = await sb.sessions.create({ skillId: "sk_1" });
+    const s = await bb.sessions.create({ skillId: "sk_1" });
     expect(s.id).toBe("ses_1");
     expect(s.skillId).toBe("sk_1");
     expect(s.tenantId).toBe("t_jv1");
@@ -172,12 +172,12 @@ describe("events.list", () => {
       seenUrl = url;
       return jsonResponse(200, { data: [], metadata: { request_id: "r", latency_ms: 1 } });
     });
-    const sb = new BaoboxClient({
+    const bb = new BaoBoxClient({
       endpoint: "https://api.example.com",
       apiKey: "k",
       fetch,
     });
-    await sb.events.list({ sessionId: "ses/1", limit: 50 });
+    await bb.events.list({ sessionId: "ses/1", limit: 50 });
     expect(seenUrl).toBe(
       "https://api.example.com/api/v1/events?session_id=ses%2F1&limit=50",
     );
@@ -193,18 +193,18 @@ describe("timeout", () => {
           reject(err);
         });
       });
-    const sb = new BaoboxClient({
+    const bb = new BaoBoxClient({
       endpoint: "https://api.example.com",
       apiKey: "k",
       fetch,
       timeoutMs: 10,
     });
     try {
-      await sb.chat({ skillId: "sk_1", message: "hi" });
+      await bb.chat({ skillId: "sk_1", message: "hi" });
       throw new Error("should have thrown");
     } catch (err) {
-      expect(err).toBeInstanceOf(BaoboxError);
-      expect((err as BaoboxError).code).toBe("TIMEOUT");
+      expect(err).toBeInstanceOf(BaoBoxError);
+      expect((err as BaoBoxError).code).toBe("TIMEOUT");
     }
   });
 });
