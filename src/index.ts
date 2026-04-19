@@ -50,7 +50,14 @@ export class BaoBoxClient {
     if (!opts.apiKey) throw new Error("BaoBoxClient: apiKey required");
     this.endpoint = opts.endpoint.replace(/\/+$/, "");
     this.apiKey = opts.apiKey;
-    this.fetch = opts.fetch ?? globalThis.fetch;
+    // Bind the fetch to globalThis. Cloudflare Workers' native fetch is
+    // a runtime intrinsic that must be invoked with this === globalThis;
+    // stashing it on the client instance and calling it via this.fetch(...)
+    // throws "Illegal invocation" because Workers sees the client as
+    // the receiver. Binding here keeps call sites clean and covers the
+    // case where a caller injects a method-bound custom fetch too.
+    const rawFetch = opts.fetch ?? globalThis.fetch;
+    this.fetch = rawFetch.bind(globalThis);
     this.timeoutMs = opts.timeoutMs ?? 30_000;
 
     this.admin = {
