@@ -166,6 +166,27 @@ new BaoBoxClient({
 });
 ```
 
+## Releasing
+
+Publishing is **tag-driven via GitHub Actions** (`.github/workflows/publish.yml`). There is no local `npm login` / `npm publish` flow — auth lives in the `NPM_TOKEN` repo secret, and pushes use `--provenance` for npm provenance attestation. The full release sequence:
+
+```bash
+# 1. Bump version in package.json (e.g. 0.3.0 → 0.4.0).
+# 2. Update the README + CHANGELOG if anything user-facing moved.
+# 3. Commit on main and push.
+git add package.json README.md src
+git commit -m "feat: 0.4.0 — ..."
+git push origin main
+
+# 4. Tag the commit. The publish job is gated on `refs/tags/v*`.
+git tag v0.4.0
+git push --tags
+```
+
+GitHub Actions then runs verify (typecheck + test + build) and, on the tag job only, `npm publish --provenance --access public`. Watch the run at the repo's **Actions** tab; the npm release shows up at https://www.npmjs.com/package/@baobox/sdk a minute or two after the job goes green.
+
+The package's `prepublishOnly` (`clean && build && test`) is the local safety net for anyone who does run `npm publish` by hand — but the day-to-day release path is the tag.
+
 ## License
 
 MIT. See [LICENSE](./LICENSE).
