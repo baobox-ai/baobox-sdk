@@ -51,6 +51,28 @@ const res = await bb.chat({
 
 Returns `{ response, usage: { inputTokens, outputTokens }, sessionId, meta }` where `meta` carries `requestId`, `latencyMs`, `model`, and an optional `trace` array.
 
+### Workflow (single-turn, stateless) — added in 0.3.0
+
+`workflow()` is the right call when the caller already owns conversation state and doesn't want BaoBox to persist a session/thread. The full conversation history is passed every call; BaoBox just runs the skill on it once and returns. Events are written under a server-generated `runId` so you can fetch the trace later.
+
+```typescript
+const res = await bb.workflow({
+  skill: "sk_email_chase",
+  clientId: "client_abc",                  // your tenant's client identifier
+  requestId: "your_app_req_42",            // your tenant's request identifier
+  input: "chase client for missing bank statements",
+  history: [                               // optional
+    { role: "user", content: "draft an email..." },
+    { role: "assistant", content: "Sure, here's a draft..." },
+  ],
+});
+
+console.log(res.response);   // skill output
+console.log(res.runId);      // "wflow_..." — handle for the run's event timeline
+```
+
+Returns `{ response, runId, usage, meta }`. `clientId` and `requestId` land on the BaoBox `call_logs` row (as `client_id` and `external_request_id`) so you can join workflow runs back to your own request log. The skill is responsible for self-routing — there is no `action` discriminator on the request.
+
 ### Sessions, Skills, Tools, Eval, Admin
 
 BaoBox now splits auth:
@@ -108,6 +130,8 @@ await bb.admin.tools.upsert({
 ```typescript
 const events = await bb.events.list({ sessionId: "ses_1" });
 ```
+
+Each `Event` carries `sessionId: string | null` and `runId: string | null` (added in 0.3.0). Chat events have `sessionId` set; workflow events have `runId` set. Both share the same shape so a single consumer can render either timeline.
 
 ## Error handling
 
