@@ -85,12 +85,16 @@ export type WorkflowRequest = {
   requestId: string;
   /** The new user input for this turn. */
   input: string;
+  /** Optional schema that BaoBox should use to parse / validate structured output. */
+  outputSchema?: JsonObject;
   /** Optional prior conversation history. Caller is responsible for state. */
   history?: WorkflowHistoryEntry[];
 };
 
-export type WorkflowResponse = {
+export type WorkflowResponse<TOutput = unknown> = {
   response: string;
+  /** Present when `outputSchema` was supplied and BaoBox validated structured output. */
+  output?: TOutput;
   /** BaoBox-generated run id (`wflow_…`). Use this to fetch the trace. */
   runId: string;
   usage: { inputTokens: number; outputTokens: number };

@@ -73,6 +73,45 @@ console.log(res.runId);      // "wflow_..." — handle for the run's event timel
 
 Returns `{ response, runId, usage, meta }`. `clientId` and `requestId` land on the BaoBox `call_logs` row (as `client_id` and `external_request_id`) so you can join workflow runs back to your own request log. The skill is responsible for self-routing — there is no `action` discriminator on the request.
 
+### Workflow (structured output) — added in 0.6.0
+
+When the caller needs machine-consumable output, supply `outputSchema`.
+BaoBox will parse / validate / repair the model output server-side and
+return validated `output` alongside the raw `response`.
+
+```typescript
+const res = await bb.workflowStructured<{
+  subject: string;
+  body: string;
+  missingItemsEchoed: string[];
+}>({
+  skill: "sk_email_chase",
+  clientId: "client_abc",
+  requestId: "your_app_req_42",
+  input: "draft a chase email",
+  outputSchema: {
+    type: "object",
+    required: ["subject", "body", "missingItemsEchoed"],
+    additionalProperties: false,
+    properties: {
+      subject: { type: "string" },
+      body: { type: "string" },
+      missingItemsEchoed: {
+        type: "array",
+        items: { type: "string" },
+      },
+    },
+  },
+});
+
+console.log(res.output.subject);
+console.log(res.response); // raw assistant text retained for debugging
+```
+
+`workflow()` also accepts the optional `outputSchema` field and will
+surface `output` when present. Use `workflowStructured()` when you want
+the SDK to enforce that structured output exists.
+
 ### Sessions, Skills, Tools, Eval, Admin
 
 BaoBox now splits auth:

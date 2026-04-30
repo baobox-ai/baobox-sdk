@@ -514,6 +514,89 @@ describe("workflow", () => {
     expect(r.meta.requestId).toBe("r_wf");
   });
 
+  it("forwards output_schema and maps structured output", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return jsonResponse(200, {
+        data: {
+          response: '```json\\n{"status":"ok","items":["bank_statement"]}\\n```',
+          output: { status: "ok", items: ["bank_statement"] },
+          run_id: "wflow_struct",
+          usage: { input_tokens: 9, output_tokens: 4 },
+        },
+        metadata: { request_id: "r_wf_struct", latency_ms: 25 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "k",
+      fetch,
+    });
+
+    const result = await bb.workflow<{ status: string; items: string[] }>({
+      skill: "sk_x",
+      clientId: "c",
+      requestId: "rq",
+      input: "hi",
+      outputSchema: {
+        type: "object",
+        required: ["status", "items"],
+        properties: {
+          status: { type: "string" },
+          items: { type: "array", items: { type: "string" } },
+        },
+      },
+    });
+
+    expect(seenBody).toEqual({
+      skill: "sk_x",
+      client_id: "c",
+      request_id: "rq",
+      input: "hi",
+      output_schema: {
+        type: "object",
+        required: ["status", "items"],
+        properties: {
+          status: { type: "string" },
+          items: { type: "array", items: { type: "string" } },
+        },
+      },
+    });
+    expect(result.output).toEqual({ status: "ok", items: ["bank_statement"] });
+  });
+
+  it("workflowStructured requires structured output in the response", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: {
+          response: "{}",
+          run_id: "wflow_struct_missing",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+        metadata: { request_id: "r_missing", latency_ms: 10 },
+      }));
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "k",
+      fetch,
+    });
+
+    await expect(
+      bb.workflowStructured<{ status: string }>({
+        skill: "sk_x",
+        clientId: "c",
+        requestId: "rq",
+        input: "hi",
+        outputSchema: {
+          type: "object",
+          required: ["status"],
+          properties: { status: { type: "string" } },
+        },
+      }),
+    ).rejects.toBeInstanceOf(BaoBoxError);
+  });
+
   it("omits history when not provided", async () => {
     let seenBody: Record<string, unknown> = {};
     const fetch = fakeFetch((_url, init) => {

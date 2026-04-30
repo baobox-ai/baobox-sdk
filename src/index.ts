@@ -562,9 +562,10 @@ export class BaoBoxClient {
   // history every call; BaoBox writes events under the returned runId
   // and tags the call_logs row with run_type='workflow' + the tenant
   // correlators. See `WorkflowRequest`/`WorkflowResponse` for the shape.
-  async workflow(req: WorkflowRequest): Promise<WorkflowResponse> {
+  async workflow<TOutput = unknown>(req: WorkflowRequest): Promise<WorkflowResponse<TOutput>> {
     const body = await this.requestApi<{
       response: string;
+      output?: TOutput;
       run_id: string;
       usage: { input_tokens: number; output_tokens: number };
     }>("POST", "/api/v1/workflow", compactObject({
@@ -572,11 +573,13 @@ export class BaoBoxClient {
       client_id: req.clientId,
       request_id: req.requestId,
       input: req.input,
+      output_schema: req.outputSchema,
       history: req.history,
     }));
 
     return {
       response: body.data.response,
+      output: body.data.output,
       runId: body.data.run_id,
       usage: {
         inputTokens: body.data.usage.input_tokens,
@@ -584,6 +587,22 @@ export class BaoBoxClient {
       },
       meta: body.meta,
     };
+  }
+
+  async workflowStructured<TOutput>(
+    req: WorkflowRequest & { outputSchema: JsonObject },
+  ): Promise<WorkflowResponse<TOutput> & { output: TOutput }> {
+    const response = await this.workflow<TOutput>(req);
+    if (response.output === undefined) {
+      throw new BaoBoxError(
+        0,
+        "INVALID_RESPONSE",
+        "BaoBox workflow response omitted structured output",
+        response.meta.requestId,
+        null,
+      );
+    }
+    return response as WorkflowResponse<TOutput> & { output: TOutput };
   }
 
   private async getHealth(): Promise<HealthResponse> {
