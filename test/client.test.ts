@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { BaoBoxClient, BaoBoxError } from "../src/index.js";
+import {
+  attachmentFromInline,
+  attachmentFromRef,
+  attachmentFromUrl,
+  BaoBoxClient,
+  BaoBoxError,
+  MAX_INLINE_BYTES,
+} from "../src/index.js";
 
 function fakeFetch(handler: (url: string, init: RequestInit) => Response) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -996,5 +1003,238 @@ describe("tools.invoke (M5 — direct tool dispatch)", () => {
     await expect(
       bb.tools.invoke({ tool: "send_email", tenantId: "t_a", inputs: {} }),
     ).rejects.toThrow(/apiKey required/);
+  });
+});
+
+describe("attachments builders (0.6.0)", () => {
+  it("fromUrl produces a properly-shaped url attachment", () => {
+    const att = attachmentFromUrl({
+      url: "https://files.example.com/signed/abc.pdf",
+      filename: "statement.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1234,
+      checksumSha256: "a".repeat(64),
+      parseStrategy: "extract_text",
+    });
+
+    expect(att).toEqual({
+      filename: "statement.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1234,
+      source: {
+        kind: "url",
+        url: "https://files.example.com/signed/abc.pdf",
+        checksumSha256: "a".repeat(64),
+      },
+      parseStrategy: "extract_text",
+    });
+  });
+
+  it("fromUrl rejects non-https URLs", () => {
+    expect(() =>
+      attachmentFromUrl({ url: "http://insecure.example.com/x.pdf" }),
+    ).toThrow(/https/);
+  });
+
+  it("fromInline base64-encodes bytes and stamps sizeBytes", () => {
+    const bytes = new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f]); // "Hello"
+    const att = attachmentFromInline({
+      bytes,
+      filename: "greeting.txt",
+      mimeType: "text/plain",
+    });
+
+    expect(att.source).toEqual({ kind: "inline", bytesBase64: "SGVsbG8=" });
+    expect(att.sizeBytes).toBe(5);
+    expect(att.filename).toBe("greeting.txt");
+    expect(att.mimeType).toBe("text/plain");
+  });
+
+  it("fromInline rejects payloads larger than 5 MB up-front", () => {
+    const oversize = new Uint8Array(MAX_INLINE_BYTES + 1);
+    expect(() => attachmentFromInline({ bytes: oversize })).toThrow(/5242880|exceeds/);
+  });
+
+  it("fromInline accepts an exact 5 MB payload", () => {
+    const exact = new Uint8Array(MAX_INLINE_BYTES);
+    expect(() => attachmentFromInline({ bytes: exact })).not.toThrow();
+  });
+
+  it("fromRef produces a baobox_ref attachment", () => {
+    const att = attachmentFromRef({
+      attId: "att_abc123def456",
+      filename: "earlier.pdf",
+    });
+    expect(att).toEqual({
+      attId: "att_abc123def456",
+      filename: "earlier.pdf",
+      source: { kind: "baobox_ref", attId: "att_abc123def456" },
+    });
+  });
+
+  it("client.attachments.* exposes the same builders", () => {
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "k",
+    });
+    const fromMethod = bb.attachments.fromUrl({ url: "https://x.example.com/y" });
+    const fromStandalone = attachmentFromUrl({ url: "https://x.example.com/y" });
+    expect(fromMethod).toEqual(fromStandalone);
+  });
+});
+
+describe("attachments wire conversion on workflow() / chat()", () => {
+  it("workflow() sends attachments[] with snake_case keys", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return jsonResponse(200, {
+        data: {
+          response: "ok",
+          run_id: "wflow_att",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+        metadata: { request_id: "r_att", latency_ms: 10 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "k",
+      fetch,
+    });
+
+    await bb.workflow({
+      skill: "sk_x",
+      clientId: "c",
+      requestId: "rq",
+      input: "hi",
+      attachments: [
+        bb.attachments.fromUrl({
+          url: "https://files.example.com/a.pdf",
+          filename: "a.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 999,
+          checksumSha256: "b".repeat(64),
+          parseStrategy: "llamaparse",
+        }),
+        bb.attachments.fromInline({
+          bytes: new Uint8Array([1, 2, 3]),
+          filename: "blob.bin",
+          mimeType: "application/octet-stream",
+        }),
+        bb.attachments.fromRef({ attId: "att_abc123def456", filename: "prev.pdf" }),
+      ],
+    });
+
+    expect(seenBody.attachments).toEqual([
+      {
+        filename: "a.pdf",
+        mime_type: "application/pdf",
+        size_bytes: 999,
+        source: {
+          kind: "url",
+          url: "https://files.example.com/a.pdf",
+          checksum_sha256: "b".repeat(64),
+        },
+        parse_strategy: "llamaparse",
+      },
+      {
+        filename: "blob.bin",
+        mime_type: "application/octet-stream",
+        size_bytes: 3,
+        source: { kind: "inline", bytes_base64: "AQID" },
+      },
+      {
+        att_id: "att_abc123def456",
+        filename: "prev.pdf",
+        source: { kind: "baobox_ref", att_id: "att_abc123def456" },
+      },
+    ]);
+  });
+
+  it("chat() sends attachments[] with snake_case keys", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return jsonResponse(200, {
+        data: {
+          response: "ok",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          session_id: "ses_x",
+        },
+        metadata: { request_id: "r_chat_att", latency_ms: 5 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "k",
+      fetch,
+    });
+
+    await bb.chat({
+      message: "hello",
+      attachments: [bb.attachments.fromUrl({ url: "https://files.example.com/x.pdf" })],
+    });
+
+    expect(seenBody.attachments).toEqual([
+      {
+        source: { kind: "url", url: "https://files.example.com/x.pdf" },
+      },
+    ]);
+  });
+
+  it("omits attachments field when not provided", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return jsonResponse(200, {
+        data: {
+          response: "ok",
+          run_id: "wflow_noatt",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+        metadata: { request_id: "r_noatt", latency_ms: 5 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "k",
+      fetch,
+    });
+    await bb.workflow({
+      skill: "sk_x",
+      clientId: "c",
+      requestId: "rq",
+      input: "hi",
+    });
+    expect("attachments" in seenBody).toBe(false);
+  });
+
+  it("omits attachments field when array is empty", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return jsonResponse(200, {
+        data: {
+          response: "ok",
+          run_id: "wflow_empty",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+        metadata: { request_id: "r_empty", latency_ms: 5 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "k",
+      fetch,
+    });
+    await bb.workflow({
+      skill: "sk_x",
+      clientId: "c",
+      requestId: "rq",
+      input: "hi",
+      attachments: [],
+    });
+    expect("attachments" in seenBody).toBe(false);
   });
 });
