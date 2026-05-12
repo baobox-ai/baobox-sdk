@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.7.0
+
+`parse_strategy`-aware helpers on top of the 0.6.0 `attachments[]`
+contract. The L3 LlamaParse fallback chain is now live server-side
+(BaoBox η.2 / B-5), so callers can deliberately route an attachment
+through a tier without restructuring the rest of the request.
+
+### Added
+
+- `attachmentWithStrategy(att, strategy)` standalone export and
+  `client.attachments.withStrategy(att, strategy)` namespaced form.
+  Returns a NEW `AttachmentInput` with `parseStrategy` overridden;
+  preserves every other field. Pure — never mutates the input.
+
+### When to use which strategy
+
+| Strategy       | What BaoBox does                                                                       | Use when                                                                            |
+| -------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `auto`         | Server picks based on mime + skill defaults (`filename` → `extract_text` → `llamaparse`). | Default. You don't have a strong opinion and trust the chain.                       |
+| `filename`     | Records metadata only — never reads bytes.                                              | You only need a paper trail (e.g. "client sent us this") and no parse cost.         |
+| `extract_text` | L2 text-only path (PDF text extraction, `.txt`, basic docx).                            | Layout doesn't matter and cost matters. Skips the L3 hop on a known text PDF.       |
+| `llamaparse`   | L3 high-fidelity via LlamaParse Cloud (OCR, tables, multimodal).                        | Image-heavy PDFs, scanned documents, table-dense statements. Requires a tenant LlamaParse integration row. |
+
+### Re-exports
+
+- `ParseStrategy` continues to be re-exported from the package root
+  (`export type * from "./types.js"`).
+
+### Migration
+
+Back-compatible. Existing callers that don't touch `parseStrategy`
+see no change.
+
+```ts
+const base = bb.attachments.fromUrl({
+  url: "https://your-r2.example.com/signed/abc.pdf",
+  filename: "statement.pdf",
+  mimeType: "application/pdf",
+});
+
+// Pin to L3 when you know the document is image-heavy.
+const pinned = bb.attachments.withStrategy(base, "llamaparse");
+```
+
 ## 0.6.0
 
 Structured workflow support + per-request `attachments[]` contract.

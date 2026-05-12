@@ -9,6 +9,7 @@ import type {
   AttachmentInputBaoboxRef,
   AttachmentInputInline,
   AttachmentInputUrl,
+  ParseStrategy,
   AttachToolResult,
   BaoBoxClientOptions,
   CallerPushedEventType,
@@ -438,6 +439,12 @@ export class BaoBoxClient {
     fromUrl: (input: AttachmentFromUrlInput) => AttachmentInput;
     fromInline: (input: AttachmentFromInlineInput) => AttachmentInput;
     fromRef: (input: AttachmentFromRefInput) => AttachmentInput;
+    /**
+     * Returns a new `AttachmentInput` with `parseStrategy` set to
+     * `strategy`. Pure — never mutates the input. See
+     * `attachmentWithStrategy` for the standalone export.
+     */
+    withStrategy: (att: AttachmentInput, strategy: ParseStrategy) => AttachmentInput;
   };
 
   constructor(opts: BaoBoxClientOptions) {
@@ -555,6 +562,7 @@ export class BaoBoxClient {
       fromUrl: attachmentFromUrl,
       fromInline: attachmentFromInline,
       fromRef: attachmentFromRef,
+      withStrategy: attachmentWithStrategy,
     };
   }
 
@@ -1634,6 +1642,16 @@ function buildAttachment(
     source,
     ...(meta.parseStrategy !== undefined ? { parseStrategy: meta.parseStrategy } : {}),
   };
+}
+
+// 0.7.0 — fluent override for `parseStrategy`. Returns a NEW attachment;
+// never mutates the input. See README "Choosing a parse strategy" for
+// the four tiers and when to pin each one.
+export function attachmentWithStrategy(
+  att: AttachmentInput,
+  strategy: ParseStrategy,
+): AttachmentInput {
+  return { ...att, parseStrategy: strategy };
 }
 
 // Wire conversion — camelCase domain → snake_case JSON. Centralized so
