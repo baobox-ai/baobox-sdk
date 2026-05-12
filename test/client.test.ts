@@ -3,10 +3,12 @@ import {
   attachmentFromInline,
   attachmentFromRef,
   attachmentFromUrl,
+  attachmentWithStrategy,
   BaoBoxClient,
   BaoBoxError,
   MAX_INLINE_BYTES,
 } from "../src/index.js";
+import type { AttachmentInput } from "../src/index.js";
 
 function fakeFetch(handler: (url: string, init: RequestInit) => Response) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1236,5 +1238,135 @@ describe("attachments wire conversion on workflow() / chat()", () => {
       attachments: [],
     });
     expect("attachments" in seenBody).toBe(false);
+  });
+});
+
+describe("attachmentWithStrategy (0.7.0)", () => {
+  it("overrides an existing parseStrategy without mutating the input", () => {
+    const original = attachmentFromUrl({
+      url: "https://files.example.com/a.pdf",
+      filename: "a.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1234,
+      parseStrategy: "extract_text",
+    });
+
+    const overridden = attachmentWithStrategy(original, "llamaparse");
+
+    expect(overridden.parseStrategy).toBe("llamaparse");
+    // Original is untouched.
+    expect(original.parseStrategy).toBe("extract_text");
+    expect(overridden).not.toBe(original);
+  });
+
+  it("sets parseStrategy when none was present", () => {
+    const original = attachmentFromUrl({
+      url: "https://files.example.com/a.pdf",
+      filename: "a.pdf",
+    });
+    expect(original.parseStrategy).toBeUndefined();
+
+    const stamped = attachmentWithStrategy(original, "filename");
+
+    expect(stamped.parseStrategy).toBe("filename");
+    expect(original.parseStrategy).toBeUndefined();
+  });
+
+  it("preserves every other field across all three source kinds", () => {
+    const fromUrl = attachmentFromUrl({
+      url: "https://files.example.com/a.pdf",
+      filename: "a.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 999,
+      checksumSha256: "c".repeat(64),
+      auth: { authorization: "Bearer x" },
+    });
+    const fromInline = attachmentFromInline({
+      bytes: new Uint8Array([1, 2, 3]),
+      filename: "blob.bin",
+      mimeType: "application/octet-stream",
+    });
+    const fromRef = attachmentFromRef({
+      attId: "att_abc123def456",
+      filename: "earlier.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 555,
+    });
+
+    for (const att of [fromUrl, fromInline, fromRef]) {
+      const next = attachmentWithStrategy(att, "auto");
+      const { parseStrategy: _ignoreA, ...attRest } = att;
+      const { parseStrategy: _ignoreB, ...nextRest } = next;
+      expect(nextRest).toEqual(attRest);
+      expect(next.parseStrategy).toBe("auto");
+    }
+  });
+
+  it("accepts every ParseStrategy value", () => {
+    const base = attachmentFromUrl({ url: "https://files.example.com/x.pdf" });
+    const strategies: AttachmentInput["parseStrategy"][] = [
+      "auto",
+      "filename",
+      "extract_text",
+      "llamaparse",
+    ];
+    for (const s of strategies) {
+      expect(attachmentWithStrategy(base, s!).parseStrategy).toBe(s);
+    }
+  });
+
+  it("client.attachments.withStrategy matches the standalone export", () => {
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "k",
+    });
+    const base = attachmentFromUrl({
+      url: "https://files.example.com/a.pdf",
+      filename: "a.pdf",
+      mimeType: "application/pdf",
+    });
+
+    const viaMethod = bb.attachments.withStrategy(base, "llamaparse");
+    const viaStandalone = attachmentWithStrategy(base, "llamaparse");
+
+    expect(viaMethod).toEqual(viaStandalone);
+  });
+
+  it("piped attachment sends the overridden parse_strategy over the wire", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return jsonResponse(200, {
+        data: {
+          response: "ok",
+          run_id: "wflow_ws",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+        metadata: { request_id: "r_ws", latency_ms: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "k",
+      fetch,
+    });
+
+    const base = bb.attachments.fromUrl({
+      url: "https://files.example.com/a.pdf",
+      filename: "a.pdf",
+      parseStrategy: "extract_text",
+    });
+    const pinned = bb.attachments.withStrategy(base, "llamaparse");
+
+    await bb.workflow({
+      skill: "sk_x",
+      clientId: "c",
+      requestId: "rq",
+      input: "hi",
+      attachments: [pinned],
+    });
+
+    const attachments = seenBody.attachments as Array<Record<string, unknown>>;
+    expect(attachments[0]?.parse_strategy).toBe("llamaparse");
   });
 });

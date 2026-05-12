@@ -170,6 +170,41 @@ functions (`attachmentFromUrl`, `attachmentFromInline`,
 `attachmentFromRef`) for callers who don't want to construct a client
 just to shape an attachment.
 
+### Choosing a parse strategy — added in 0.7.0
+
+`parseStrategy` controls the tier BaoBox uses to read an attachment.
+Leaving it as `"auto"` (the default) lets the server pick based on
+mime type, skill configuration, and tenant defaults — that's the
+right answer most of the time. Pin a tier when the caller has
+information the server doesn't (e.g. "this PDF is a scanned image,
+skip L2").
+
+| Strategy       | What BaoBox does                                                                       | Use when                                                                            |
+| -------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `auto`         | Server picks based on mime + skill defaults (`filename` → `extract_text` → `llamaparse`). | Default. You don't have a strong opinion and trust the chain.                       |
+| `filename`     | Records metadata only — never reads bytes.                                              | You only need a paper trail (e.g. "client sent us this") and no parse cost.         |
+| `extract_text` | L2 text-only path (PDF text extraction, `.txt`, basic docx).                            | Layout doesn't matter and cost matters. Skips the L3 hop on a known text PDF.       |
+| `llamaparse`   | L3 high-fidelity via LlamaParse Cloud (OCR, tables, multimodal).                        | Image-heavy PDFs, scanned documents, table-dense statements. Requires a tenant LlamaParse integration row. |
+
+`client.attachments.withStrategy(att, strategy)` returns a new
+attachment with `parseStrategy` overridden — the original is left
+untouched. Useful when the same builder output is reused across
+calls but a single dispatch wants a different tier:
+
+```typescript
+const base = bb.attachments.fromUrl({
+  url: "https://your-r2.example.com/signed/abc.pdf",
+  filename: "statement.pdf",
+  mimeType: "application/pdf",
+});
+
+const cheap     = bb.attachments.withStrategy(base, "extract_text");
+const highFi    = bb.attachments.withStrategy(base, "llamaparse");
+```
+
+Also exported as a standalone `attachmentWithStrategy(att, strategy)`
+for callers who don't want a client instance.
+
 ### Sessions, Skills, Tools, Eval, Admin
 
 BaoBox now splits auth:
