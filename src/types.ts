@@ -44,6 +44,64 @@ export type HealthResponse = {
   meta: ResponseMeta;
 };
 
+// --- Attachments (added 0.6.0) ---
+//
+// Mirrors BaoBox's per-request `attachments[]` contract — the wire-level
+// schema lives in `baobox/src/routes/_attachment.schemas.ts` and the
+// domain shape in `baobox/src/shared/types/attachment.ts`. The SDK
+// surface is camelCase; the client converts to snake_case on the wire so
+// callers never see `bytes_base64` / `att_id` / `parse_strategy`.
+//
+// Three source modes:
+//   - `url`        : signed URL pointing at the caller's R2 (BaoBox
+//                    fetches lazily). Optional `checksumSha256` for
+//                    cache key + integrity verification.
+//   - `inline`     : raw bytes (≤ 5 MB after base64 decode). The
+//                    `fromInline()` helper handles base64 + size guard.
+//   - `baobox_ref` : re-use a previously-uploaded BaoBox R2 object by
+//                    `attId`. No bytes on the wire.
+//
+// `parseStrategy` requests a parsing tier; `"auto"` lets BaoBox choose.
+
+export type ParseStrategy = "auto" | "filename" | "extract_text" | "llamaparse";
+
+export type AttachmentInputUrl = {
+  kind: "url";
+  url: string;
+  checksumSha256?: string;
+  auth?: Record<string, string>;
+};
+
+export type AttachmentInputInline = {
+  kind: "inline";
+  bytesBase64: string;
+};
+
+export type AttachmentInputBaoboxRef = {
+  kind: "baobox_ref";
+  attId: string;
+};
+
+export type AttachmentSource =
+  | AttachmentInputUrl
+  | AttachmentInputInline
+  | AttachmentInputBaoboxRef;
+
+export type AttachmentInput = {
+  /** Optional pre-assigned id (`att_…`). The server generates one if omitted. */
+  attId?: string;
+  filename?: string;
+  mimeType?: string;
+  /** Declared byte count — informational only. Bytes are sized server-side. */
+  sizeBytes?: number;
+  source: AttachmentSource;
+  /** Defaults to `"auto"` server-side when omitted. */
+  parseStrategy?: ParseStrategy;
+};
+
+/** Server-imposed 5 MB cap on the decoded inline payload. */
+export const MAX_INLINE_BYTES = 5 * 1024 * 1024;
+
 // --- Chat ---
 
 export type ChatRequest = {
@@ -51,6 +109,8 @@ export type ChatRequest = {
   message: string;
   sessionId?: string;
   metadata?: JsonObject;
+  /** Optional inbound attachments. See `client.attachments.*` for builders. */
+  attachments?: AttachmentInput[];
 };
 
 export type ChatResponse = {
@@ -89,6 +149,8 @@ export type WorkflowRequest = {
   outputSchema?: JsonObject;
   /** Optional prior conversation history. Caller is responsible for state. */
   history?: WorkflowHistoryEntry[];
+  /** Optional inbound attachments. See `client.attachments.*` for builders. */
+  attachments?: AttachmentInput[];
 };
 
 export type WorkflowResponse<TOutput = unknown> = {

@@ -112,6 +112,64 @@ console.log(res.response); // raw assistant text retained for debugging
 surface `output` when present. Use `workflowStructured()` when you want
 the SDK to enforce that structured output exists.
 
+### Sending attachments — added in 0.6.0
+
+Both `workflow()` and `chat()` accept an optional `attachments` array.
+Each entry carries a `source` (one of three kinds) plus parse routing
+metadata. Bytes are never returned in responses; BaoBox writes an
+`attachment_received` event onto the run/session timeline with metadata
+only.
+
+```typescript
+const res = await bb.workflow({
+  skill: "sk_email_chase",
+  clientId: "client_abc",
+  requestId: "your_app_req_42",
+  input: "summarise this statement",
+  attachments: [
+    // Most common: a signed URL on your own R2 bucket.
+    bb.attachments.fromUrl({
+      url: "https://your-r2.example.com/signed/abc.pdf",
+      filename: "statement.pdf",
+      mimeType: "application/pdf",
+      checksumSha256: "<64-char-lower-hex>",   // optional — enables BaoBox's parse cache
+    }),
+
+    // Inline base64 (≤ 5 MB after decode). The helper encodes for you
+    // and rejects oversize payloads up-front.
+    bb.attachments.fromInline({
+      bytes: new Uint8Array(await file.arrayBuffer()),
+      filename: "page-2.png",
+      mimeType: "image/png",
+    }),
+
+    // Re-use a previously-uploaded BaoBox object.
+    bb.attachments.fromRef({
+      attId: "att_abc123def456",
+      filename: "earlier.pdf",
+    }),
+  ],
+});
+```
+
+`parseStrategy` is optional and defaults to `"auto"` server-side
+(BaoBox picks `filename` → `extract_text` → `llamaparse` based on
+mime type and per-tenant configuration). Pass an explicit value to
+pin a tier:
+
+```typescript
+bb.attachments.fromUrl({
+  url: "...",
+  parseStrategy: "extract_text",   // skip the L3 fallback
+});
+```
+
+The builders are pure — there's no network call until the parent
+`workflow()` / `chat()` runs. They're also re-exported as standalone
+functions (`attachmentFromUrl`, `attachmentFromInline`,
+`attachmentFromRef`) for callers who don't want to construct a client
+just to shape an attachment.
+
 ### Sessions, Skills, Tools, Eval, Admin
 
 BaoBox now splits auth:

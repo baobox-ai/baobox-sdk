@@ -1,9 +1,14 @@
 import { BaoBoxError } from "./errors.js";
+import { MAX_INLINE_BYTES } from "./types.js";
 import type {
   AdminStats,
   ApiKey,
   AppendedRunEvent,
   AppendRunEventRequest,
+  AttachmentInput,
+  AttachmentInputBaoboxRef,
+  AttachmentInputInline,
+  AttachmentInputUrl,
   AttachToolResult,
   BaoBoxClientOptions,
   CallerPushedEventType,
@@ -66,6 +71,7 @@ import type {
 } from "./types.js";
 
 export { BaoBoxError } from "./errors.js";
+export { MAX_INLINE_BYTES } from "./types.js";
 export type * from "./types.js";
 
 type FetchFn = typeof globalThis.fetch;
@@ -422,6 +428,17 @@ export class BaoBoxClient {
      */
     appendEvent: (runId: string, req: AppendRunEventRequest) => Promise<AppendedRunEvent>;
   };
+  /**
+   * Builders for the `attachments[]` field on `chat()` / `workflow()`.
+   * Pure helpers — they don't touch the network. Re-exported as standalone
+   * `attachmentFromUrl` / `attachmentFromInline` / `attachmentFromRef`
+   * functions for callers who only need the shape.
+   */
+  public readonly attachments: {
+    fromUrl: (input: AttachmentFromUrlInput) => AttachmentInput;
+    fromInline: (input: AttachmentFromInlineInput) => AttachmentInput;
+    fromRef: (input: AttachmentFromRefInput) => AttachmentInput;
+  };
 
   constructor(opts: BaoBoxClientOptions) {
     if (!opts.endpoint) throw new Error("BaoBoxClient: endpoint required");
@@ -533,6 +550,12 @@ export class BaoBoxClient {
       list: (req) => this.listRuns(req),
       appendEvent: (runId, req) => this.appendRunEvent(runId, req),
     };
+
+    this.attachments = {
+      fromUrl: attachmentFromUrl,
+      fromInline: attachmentFromInline,
+      fromRef: attachmentFromRef,
+    };
   }
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
@@ -545,6 +568,7 @@ export class BaoBoxClient {
       message: req.message,
       session_id: req.sessionId,
       metadata: req.metadata,
+      attachments: attachmentsToWire(req.attachments),
     }));
 
     return {
@@ -575,6 +599,7 @@ export class BaoBoxClient {
       input: req.input,
       output_schema: req.outputSchema,
       history: req.history,
+      attachments: attachmentsToWire(req.attachments),
     }));
 
     return {
@@ -1517,4 +1542,145 @@ function safeParseJson(text: string): unknown {
   } catch {
     return {};
   }
+}
+
+// --- Attachments (0.6.0) ---
+//
+// Pure helpers — no client state needed. Exposed both as standalone exports
+// and as `client.attachments.*` (see constructor) for fluent use.
+
+export type AttachmentFromUrlInput = {
+  /** Signed HTTPS URL. The BaoBox worker fetches lazily — bytes never sit on the SDK side. */
+  url: string;
+  filename?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  /** Optional 64-char lowercase hex sha256 — enables BaoBox's parse cache. */
+  checksumSha256?: string;
+  /** Optional request headers BaoBox should attach when fetching the URL. */
+  auth?: Record<string, string>;
+  /** Defaults to `"auto"` server-side when omitted. */
+  parseStrategy?: AttachmentInput["parseStrategy"];
+};
+
+export type AttachmentFromInlineInput = {
+  /** Raw bytes — encoded to base64 inside the helper. */
+  bytes: Uint8Array | ArrayBuffer;
+  filename?: string;
+  mimeType?: string;
+  /** Defaults to `"auto"` server-side when omitted. */
+  parseStrategy?: AttachmentInput["parseStrategy"];
+};
+
+export type AttachmentFromRefInput = {
+  /** Existing BaoBox attachment id (`att_…`). */
+  attId: string;
+  filename?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  /** Defaults to `"auto"` server-side when omitted. */
+  parseStrategy?: AttachmentInput["parseStrategy"];
+};
+
+export function attachmentFromUrl(input: AttachmentFromUrlInput): AttachmentInput {
+  if (!input.url.startsWith("https://")) {
+    throw new Error("attachmentFromUrl: url must be https://");
+  }
+  const source: AttachmentInputUrl = {
+    kind: "url",
+    url: input.url,
+    ...(input.checksumSha256 !== undefined ? { checksumSha256: input.checksumSha256 } : {}),
+    ...(input.auth !== undefined ? { auth: input.auth } : {}),
+  };
+  return buildAttachment(source, input);
+}
+
+export function attachmentFromInline(input: AttachmentFromInlineInput): AttachmentInput {
+  const byteLength =
+    input.bytes instanceof Uint8Array ? input.bytes.byteLength : input.bytes.byteLength;
+  // Mirrors the server's 413 ATTACHMENT_TOO_LARGE so callers fail fast.
+  if (byteLength > MAX_INLINE_BYTES) {
+    throw new Error(
+      `attachmentFromInline: inline payload exceeds ${MAX_INLINE_BYTES} bytes (got ${byteLength})`,
+    );
+  }
+  const source: AttachmentInputInline = {
+    kind: "inline",
+    bytesBase64: encodeBase64(input.bytes),
+  };
+  return buildAttachment(source, { ...input, sizeBytes: byteLength });
+}
+
+export function attachmentFromRef(input: AttachmentFromRefInput): AttachmentInput {
+  const source: AttachmentInputBaoboxRef = { kind: "baobox_ref", attId: input.attId };
+  return buildAttachment(source, { ...input, attId: input.attId });
+}
+
+function buildAttachment(
+  source: AttachmentInput["source"],
+  meta: {
+    attId?: string;
+    filename?: string;
+    mimeType?: string;
+    sizeBytes?: number;
+    parseStrategy?: AttachmentInput["parseStrategy"];
+  },
+): AttachmentInput {
+  return {
+    ...(meta.attId !== undefined ? { attId: meta.attId } : {}),
+    ...(meta.filename !== undefined ? { filename: meta.filename } : {}),
+    ...(meta.mimeType !== undefined ? { mimeType: meta.mimeType } : {}),
+    ...(meta.sizeBytes !== undefined ? { sizeBytes: meta.sizeBytes } : {}),
+    source,
+    ...(meta.parseStrategy !== undefined ? { parseStrategy: meta.parseStrategy } : {}),
+  };
+}
+
+// Wire conversion — camelCase domain → snake_case JSON. Centralized so
+// the chat()/workflow() bodies stay terse and so the snake_case keys
+// match `baobox/src/routes/_attachment.schemas.ts` exactly.
+function attachmentsToWire(attachments?: AttachmentInput[]): unknown[] | undefined {
+  if (!attachments || attachments.length === 0) return undefined;
+  return attachments.map(attachmentToWire);
+}
+
+function attachmentToWire(att: AttachmentInput): Record<string, unknown> {
+  return compactObject({
+    att_id: att.attId,
+    filename: att.filename,
+    mime_type: att.mimeType,
+    size_bytes: att.sizeBytes,
+    source: sourceToWire(att.source),
+    parse_strategy: att.parseStrategy,
+  });
+}
+
+function sourceToWire(source: AttachmentInput["source"]): Record<string, unknown> {
+  if (source.kind === "url") {
+    return compactObject({
+      kind: "url",
+      url: source.url,
+      checksum_sha256: source.checksumSha256,
+      auth: source.auth,
+    });
+  }
+  if (source.kind === "inline") {
+    return { kind: "inline", bytes_base64: source.bytesBase64 };
+  }
+  return { kind: "baobox_ref", att_id: source.attId };
+}
+
+// Encode bytes to base64 without pulling in a runtime dep. Node 18+ has
+// `Buffer`; browsers / Workers have `btoa` over a binary string.
+function encodeBase64(bytes: Uint8Array | ArrayBuffer): string {
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(view).toString("base64");
+  }
+  let binary = "";
+  for (let i = 0; i < view.length; i++) {
+    const byte = view[i] ?? 0;
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
 }
