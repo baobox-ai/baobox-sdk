@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.0
+## 0.7.1
 
 Admin-secret callers can now mint API keys bound to a specific tenant
 via `admin.keys.create({ ..., tenantId })`. The corresponding
