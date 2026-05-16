@@ -905,6 +905,7 @@ export class BaoBoxClient {
       permissions: req.permissions,
       rate_limit: req.rateLimit,
       expires_at: req.expiresAt,
+      tenant_id: req.tenantId,
     }));
     return {
       id: body.data.id,

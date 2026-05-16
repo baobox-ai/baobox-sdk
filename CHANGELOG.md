@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.7.1
+
+Admin-secret callers can now mint API keys bound to a specific tenant
+via `admin.keys.create({ ..., tenantId })`. The corresponding
+server-side schema accepts the field; omitting it preserves the
+previous behaviour of falling back to `t_default`.
+
+### Added
+
+- `CreateApiKeyRequest.tenantId?: string`. When set, the new key's
+  `tenant_id` column is populated and every subsequent call made
+  with the key is automatically tenant-scoped by the server-side
+  auth middleware — callers never pass `tenant_id` again on
+  follow-up requests.
+- README "Multi-tenant usage" section documenting the
+  one-client-per-tenant pattern, how to mint a tenant-bound key,
+  and the small set of admin paths that accept a per-request
+  `tenantId`.
+
+### Migration
+
+Back-compatible. Existing callers that don't pass `tenantId` see no
+change — `compactObject` strips the undefined field before the request
+body is serialised.
+
+```ts
+const created = await admin.admin.keys.create({
+  name: "my-tenant-local-dev",
+  tenantId: "my_tenant_slug",
+});
+```
+
 ## 0.7.0
 
 `parse_strategy`-aware helpers on top of the 0.6.0 `attachments[]`

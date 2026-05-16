@@ -412,8 +412,10 @@ describe("admin auth surfaces", () => {
 describe("admin and eval helpers", () => {
   it("creates API keys and maps tenant_id", async () => {
     let seenAuth = "";
+    let seenBody: Record<string, unknown> = {};
     const fetch = fakeFetch((_url, init) => {
       seenAuth = (init.headers as Record<string, string>).authorization ?? "";
+      seenBody = init.body ? JSON.parse(String(init.body)) : {};
       return jsonResponse(201, {
         data: {
           id: "key_1",
@@ -433,12 +435,40 @@ describe("admin and eval helpers", () => {
 
     const key = await bb.admin.keys.create({ name: "demo" });
     expect(seenAuth).toBe("Bearer adm");
+    // When tenantId is omitted, compactObject must drop the field entirely
+    // so the server falls back to t_default.
+    expect(seenBody).not.toHaveProperty("tenant_id");
+    expect(seenBody).toEqual({ name: "demo" });
     expect(key).toEqual({
       id: "key_1",
       key: "skb_raw",
       name: "demo",
       tenantId: "t_default",
     });
+  });
+
+  it("forwards tenantId in admin.keys.create body when provided", async () => {
+    let seenBody: unknown = null;
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = init.body ? JSON.parse(String(init.body)) : null;
+      return jsonResponse(201, {
+        data: {
+          id: "key_1",
+          key: "skb_raw",
+          name: "demo",
+          tenant_id: "demo_tenant",
+        },
+        metadata: { request_id: "r_1", latency_ms: 0 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+    const key = await bb.admin.keys.create({ name: "demo", tenantId: "demo_tenant" });
+    expect(seenBody).toEqual({ name: "demo", tenant_id: "demo_tenant" });
+    expect(key.tenantId).toBe("demo_tenant");
   });
 
   it("encodes eval.compare query params", async () => {
