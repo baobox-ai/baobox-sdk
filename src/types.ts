@@ -443,6 +443,14 @@ export type CreateApiKeyRequest = {
   permissions?: string[];
   rateLimit?: number;
   expiresAt?: string;
+  /**
+   * Tenant slug to bind the new key to. Omit to fall back to the server's
+   * default tenant (`t_default`). When set, the resulting key's
+   * `tenant_id` column is populated and all calls made with it are
+   * automatically scoped to that tenant by the server-side auth middleware
+   * — callers never pass `tenant_id` again on subsequent requests.
+   */
+  tenantId?: string;
 };
 
 export type ApiKey = {

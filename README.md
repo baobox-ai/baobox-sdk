@@ -36,6 +36,59 @@ console.log(res.meta.requestId);    // "req_abc123" — matches server log
 console.log(res.meta.trace);        // [{ toolName, input, output, latencyMs }, ...]
 ```
 
+## Multi-tenant usage
+
+BaoBox is a multi-tenant system, but the SDK deliberately has no
+`tenantId` constructor field: tenant is an attribute of the API key,
+and the server-side auth middleware resolves it on every request. In
+multi-tenant deployments use **one client instance per tenant**:
+
+```typescript
+const tenantClient = new BaoBoxClient({
+  endpoint: process.env.BAOBOX_URL!,
+  apiKey: process.env.BAOBOX_TENANT_KEY!,  // tenant-bound key
+});
+
+await tenantClient.chat({
+  skillId: "sk_xxx",
+  message: "...",
+});
+// The server scopes every call to this key's tenant automatically;
+// cross-tenant access returns a 403 BaoBoxError.
+```
+
+### Minting a tenant-bound key
+
+Admin-secret holders can target a specific tenant when issuing a key
+(added in 0.8.0):
+
+```typescript
+const admin = new BaoBoxClient({
+  endpoint: process.env.BAOBOX_URL!,
+  adminSecret: process.env.BAOBOX_ADMIN_SECRET!,
+});
+
+const created = await admin.admin.keys.create({
+  name: "my-tenant-local-dev",
+  tenantId: "my_tenant_slug",   // omit to fall back to t_default
+});
+
+console.log(created.key);       // "skb_..." — hand this to the tenant
+console.log(created.tenantId);  // "my_tenant_slug"
+```
+
+The tenant slug must already exist in BaoBox's `tenants` table; tenant
+provisioning is handled by BaoBox operators through a separate ops
+path.
+
+### Cross-tenant admin paths
+
+A small number of admin-only APIs accept a per-request `tenantId`
+field for cross-tenant dispatch (`tools.invoke()`, `workflow()`,
+`runs.list()`). These are admin-secret gated — key-bound callers
+always remain scoped to the tenant their key is bound to and cannot
+override it.
+
 ## API surface
 
 ### Chat
