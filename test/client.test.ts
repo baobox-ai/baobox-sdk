@@ -82,7 +82,7 @@ describe("health", () => {
 });
 
 describe("chat", () => {
-  it("sends snake_case body, returns camelCase response", async () => {
+  it("sends camelCase body, parses legacy snake_case response", async () => {
     const seen: { url?: string; body?: unknown; auth?: string } = {};
     const fetch = fakeFetch((url, init) => {
       seen.url = url;
@@ -126,9 +126,9 @@ describe("chat", () => {
     expect(seen.url).toBe("https://api.example.com/api/v1/chat");
     expect(seen.auth).toBe("Bearer sk-123");
     expect(seen.body).toEqual({
-      skill_id: "sk_chase",
+      skillId: "sk_chase",
       message: "chase cli_01",
-      session_id: "ses_1",
+      sessionId: "ses_1",
       metadata: { source: "kanban" },
     });
     expect(r.response).toBe("chased");
@@ -502,7 +502,7 @@ describe("admin and eval helpers", () => {
 });
 
 describe("workflow", () => {
-  it("sends snake_case body, returns camelCase response with runId", async () => {
+  it("sends camelCase body, parses legacy snake_case response with runId", async () => {
     const seen: { url?: string; body?: unknown; auth?: string } = {};
     const fetch = fakeFetch((url, init) => {
       seen.url = url;
@@ -539,8 +539,8 @@ describe("workflow", () => {
     expect(seen.auth).toBe("Bearer skb-wf");
     expect(seen.body).toEqual({
       skill: "sk_email_chase",
-      client_id: "client_abc",
-      request_id: "nexionops_req_42",
+      clientId: "client_abc",
+      requestId: "nexionops_req_42",
       input: "chase client for missing bank statements",
       history: [
         { role: "user", content: "draft an email" },
@@ -590,10 +590,10 @@ describe("workflow", () => {
 
     expect(seenBody).toEqual({
       skill: "sk_x",
-      client_id: "c",
-      request_id: "rq",
+      clientId: "c",
+      requestId: "rq",
       input: "hi",
-      output_schema: {
+      outputSchema: {
         type: "object",
         required: ["status", "items"],
         properties: {
@@ -682,6 +682,127 @@ describe("workflow", () => {
         input: "hi",
       }),
     ).rejects.toBeInstanceOf(BaoBoxError);
+  });
+});
+
+// 0.8.0 — server-side migration ships dual-emit (camelCase + snake_case)
+// during the Phase-1 deprecation window. The SDK must keep parsing every
+// shape it could meet in the wild: legacy snake-only (pre-Phase-1 server),
+// Phase-1 dual-emit, and Phase-3 camel-only.
+describe("0.8.0 wire compat — chat()", () => {
+  it("parses Phase-3 camelCase-only response", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: {
+          response: "hi",
+          usage: { inputTokens: 11, outputTokens: 22 },
+          sessionId: "ses_p3",
+        },
+        metadata: {
+          requestId: "r_p3",
+          latencyMs: 99,
+          trace: [
+            {
+              toolName: "lookup",
+              input: { q: "x" },
+              output: { ok: true },
+              latencyMs: 7,
+            },
+          ],
+        },
+      }),
+    );
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    const r = await bb.chat({ message: "hi" });
+    expect(r.usage).toEqual({ inputTokens: 11, outputTokens: 22 });
+    expect(r.sessionId).toBe("ses_p3");
+    expect(r.meta.requestId).toBe("r_p3");
+    expect(r.meta.latencyMs).toBe(99);
+    expect(r.meta.trace?.[0]?.toolName).toBe("lookup");
+    expect(r.meta.trace?.[0]?.latencyMs).toBe(7);
+  });
+
+  it("parses Phase-1 dual-emit response (both shapes present)", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: {
+          response: "hi",
+          usage: {
+            inputTokens: 1,
+            input_tokens: 1,
+            outputTokens: 2,
+            output_tokens: 2,
+          },
+          sessionId: "ses_dual",
+          session_id: "ses_dual",
+        },
+        metadata: {
+          requestId: "r_dual",
+          request_id: "r_dual",
+          latencyMs: 5,
+          latency_ms: 5,
+        },
+      }),
+    );
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    const r = await bb.chat({ message: "hi" });
+    expect(r.usage).toEqual({ inputTokens: 1, outputTokens: 2 });
+    expect(r.sessionId).toBe("ses_dual");
+    expect(r.meta.requestId).toBe("r_dual");
+  });
+});
+
+describe("0.8.0 wire compat — workflow()", () => {
+  it("parses Phase-3 camelCase-only response", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: {
+          response: "done",
+          runId: "wflow_p3",
+          usage: { inputTokens: 7, outputTokens: 3 },
+        },
+        metadata: { requestId: "r_wf_p3", latencyMs: 10 },
+      }),
+    );
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    const r = await bb.workflow({ skill: "s", clientId: "c", requestId: "rq", input: "in" });
+    expect(r.runId).toBe("wflow_p3");
+    expect(r.usage).toEqual({ inputTokens: 7, outputTokens: 3 });
+    expect(r.meta.requestId).toBe("r_wf_p3");
+  });
+});
+
+describe("0.8.0 wire compat — error envelope", () => {
+  it("reads error.requestId (Phase-3 camelCase-only)", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(401, {
+        error: { code: "UNAUTHORIZED", message: "bad", requestId: "r_err_camel" },
+      }),
+    );
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    try {
+      await bb.chat({ message: "hi" });
+      throw new Error("expected BaoBoxError");
+    } catch (err) {
+      const e = err as BaoBoxError;
+      expect(e.requestId).toBe("r_err_camel");
+    }
+  });
+
+  it("reads error.request_id (legacy snake-only) for back-compat", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(401, {
+        error: { code: "UNAUTHORIZED", message: "bad", request_id: "r_err_snake" },
+      }),
+    );
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    try {
+      await bb.chat({ message: "hi" });
+      throw new Error("expected BaoBoxError");
+    } catch (err) {
+      const e = err as BaoBoxError;
+      expect(e.requestId).toBe("r_err_snake");
+    }
   });
 });
 

@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.8.0
+
+Coordinates with the server-side camelCase wire migration. The server has
+started emitting public `/api/v1/workflow` and `/api/v1/chat` responses in
+BOTH camelCase (preferred) AND snake_case (deprecated) during the Phase-1
+deprecation window — this release lets the SDK keep parsing both shapes so
+applications stay forward-compatible when the server eventually drops the
+snake variants (Phase 3, separate release).
+
+### Changed
+
+- `chat()` and `workflow()` now SEND camelCase on the wire (`skillId`,
+  `sessionId`, `clientId`, `requestId`, `outputSchema`). The server accepts
+  either shape but logs a deprecation telemetry row whenever the snake form
+  is used — this change opts every SDK user out of that noise immediately.
+- Response parsers prefer camelCase fields and fall back to snake_case so
+  the SDK works against a Phase-1 server (both shapes), a Phase-3 server
+  (camelCase only), and the legacy pre-Phase-1 server (snake only). No
+  user-visible API change — the camelCase surface stays exactly as before.
+- Error envelope parser reads `error.requestId` first, then falls back to
+  `error.request_id` — same forward-compat reasoning.
+
+### Migration
+
+Back-compatible. Existing applications using `bb.chat()` / `bb.workflow()`
+need no code change.
+
+### Why
+
+The server-side migration ships a ~2-week deprecation window where both
+shapes are accepted on inbound and both are emitted on outbound. Phase 3
+(snake-case removed) is gated on telemetry confirming integrator traffic
+has fully moved to camelCase.
+
 ## 0.7.1
 
 Admin-secret callers can now mint API keys bound to a specific tenant
