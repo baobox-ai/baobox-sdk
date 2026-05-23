@@ -84,15 +84,23 @@ type ApiEnvelope<T> = {
   meta: ResponseMeta;
 };
 
+// 0.8.0: every renamed field on the public-SDK wire (request/latency/trace)
+// arrives in BOTH shapes during the Phase-1 deprecation window and in
+// camelCase ONLY after Phase 3. Keep both optional so a single Raw* type
+// covers every server contract revision the SDK has to parse.
 type RawMetadata = {
-  request_id: string;
-  latency_ms: number;
+  requestId?: string;
+  request_id?: string;
+  latencyMs?: number;
+  latency_ms?: number;
   model?: string;
   trace?: Array<{
-    tool_name: string;
+    toolName?: string;
+    tool_name?: string;
     input: JsonObject;
     output: unknown;
-    latency_ms: number;
+    latencyMs?: number;
+    latency_ms?: number;
   }>;
 };
 
@@ -567,25 +575,40 @@ export class BaoBoxClient {
   }
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
+    // 0.8.0: send camelCase on the wire (server prefers camel; snake
+    // accepted during the Phase-1 deprecation window). Read camelCase
+    // first, fall back to snake_case — so this SDK stays compatible with
+    // a future Phase-3 server that emits camelCase only.
     const body = await this.requestApi<{
       response: string;
-      usage: { input_tokens: number; output_tokens: number };
+      usage: {
+        inputTokens?: number;
+        input_tokens?: number;
+        outputTokens?: number;
+        output_tokens?: number;
+      };
+      sessionId?: string;
       session_id?: string;
-    }>("POST", "/api/v1/chat", compactObject({
-      skill_id: req.skillId,
-      message: req.message,
-      session_id: req.sessionId,
-      metadata: req.metadata,
-      attachments: attachmentsToWire(req.attachments),
-    }));
+    }>(
+      "POST",
+      "/api/v1/chat",
+      compactObject({
+        skillId: req.skillId,
+        message: req.message,
+        sessionId: req.sessionId,
+        metadata: req.metadata,
+        attachments: attachmentsToWire(req.attachments),
+      }),
+    );
 
+    const usage = body.data.usage;
     return {
       response: body.data.response,
       usage: {
-        inputTokens: body.data.usage.input_tokens,
-        outputTokens: body.data.usage.output_tokens,
+        inputTokens: usage.inputTokens ?? usage.input_tokens ?? 0,
+        outputTokens: usage.outputTokens ?? usage.output_tokens ?? 0,
       },
-      sessionId: body.data.session_id,
+      sessionId: body.data.sessionId ?? body.data.session_id,
       meta: body.meta,
     };
   }
@@ -595,28 +618,40 @@ export class BaoBoxClient {
   // and tags the call_logs row with run_type='workflow' + the tenant
   // correlators. See `WorkflowRequest`/`WorkflowResponse` for the shape.
   async workflow<TOutput = unknown>(req: WorkflowRequest): Promise<WorkflowResponse<TOutput>> {
+    // 0.8.0: dual-shape wire (see chat() above for the rationale).
     const body = await this.requestApi<{
       response: string;
       output?: TOutput;
-      run_id: string;
-      usage: { input_tokens: number; output_tokens: number };
-    }>("POST", "/api/v1/workflow", compactObject({
-      skill: req.skill,
-      client_id: req.clientId,
-      request_id: req.requestId,
-      input: req.input,
-      output_schema: req.outputSchema,
-      history: req.history,
-      attachments: attachmentsToWire(req.attachments),
-    }));
+      runId?: string;
+      run_id?: string;
+      usage: {
+        inputTokens?: number;
+        input_tokens?: number;
+        outputTokens?: number;
+        output_tokens?: number;
+      };
+    }>(
+      "POST",
+      "/api/v1/workflow",
+      compactObject({
+        skill: req.skill,
+        clientId: req.clientId,
+        requestId: req.requestId,
+        input: req.input,
+        outputSchema: req.outputSchema,
+        history: req.history,
+        attachments: attachmentsToWire(req.attachments),
+      }),
+    );
 
+    const usage = body.data.usage;
     return {
       response: body.data.response,
       output: body.data.output,
-      runId: body.data.run_id,
+      runId: (body.data.runId ?? body.data.run_id) as string,
       usage: {
-        inputTokens: body.data.usage.input_tokens,
-        outputTokens: body.data.usage.output_tokens,
+        inputTokens: usage.inputTokens ?? usage.input_tokens ?? 0,
+        outputTokens: usage.outputTokens ?? usage.output_tokens ?? 0,
       },
       meta: body.meta,
     };
@@ -1219,13 +1254,23 @@ export class BaoBoxClient {
     const parsed = text.length ? safeParseJson(text) : {};
 
     if (!res.ok) {
-      const errObj = (parsed as { error?: { code?: string; message?: string; request_id?: string } })
-        .error;
+      // 0.8.0: error envelope dual-shape (`requestId` Phase 3+, `request_id`
+      // Phase 1 / legacy). Read camel first; fall back to snake.
+      const errObj = (
+        parsed as {
+          error?: {
+            code?: string;
+            message?: string;
+            requestId?: string;
+            request_id?: string;
+          };
+        }
+      ).error;
       throw new BaoBoxError(
         res.status,
         errObj?.code ?? "HTTP_ERROR",
         errObj?.message ?? res.statusText,
-        errObj?.request_id ?? null,
+        errObj?.requestId ?? errObj?.request_id ?? null,
         parsed,
       );
     }
@@ -1261,15 +1306,18 @@ export class BaoBoxClient {
 function mapResponseMeta(metadata?: RawMetadata): ResponseMeta {
   if (!metadata) return { requestId: "", latencyMs: 0 };
 
+  // 0.8.0: dual-shape envelope — prefer camelCase, fall back to snake_case
+  // so this SDK keeps parsing both Phase-1 (dual-emit) and Phase-3
+  // (camel-only) server responses.
   return {
-    requestId: metadata.request_id,
-    latencyMs: metadata.latency_ms,
+    requestId: metadata.requestId ?? metadata.request_id ?? "",
+    latencyMs: metadata.latencyMs ?? metadata.latency_ms ?? 0,
     model: metadata.model,
     trace: metadata.trace?.map((trace) => ({
-      toolName: trace.tool_name,
+      toolName: trace.toolName ?? trace.tool_name ?? "",
       input: trace.input,
       output: trace.output,
-      latencyMs: trace.latency_ms,
+      latencyMs: trace.latencyMs ?? trace.latency_ms ?? 0,
     })),
   };
 }
