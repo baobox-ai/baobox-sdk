@@ -729,18 +729,18 @@ describe("0.8.0 wire compat — chat()", () => {
           response: "hi",
           usage: {
             inputTokens: 1,
-            inputTokens: 1,
+            input_tokens: 1,
             outputTokens: 2,
-            outputTokens: 2,
+            output_tokens: 2,
           },
           sessionId: "ses_dual",
           session_id: "ses_dual",
         },
         metadata: {
           requestId: "r_dual",
-          requestId: "r_dual",
+          request_id: "r_dual",
           latencyMs: 5,
-          latencyMs: 5,
+          latency_ms: 5,
         },
       }),
     );
