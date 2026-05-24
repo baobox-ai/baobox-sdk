@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.8.1
+
+Regression fix on `client.tools.invoke()` shipped in 0.8.0.
+
+### What broke
+
+`/api/v1/tools/invoke` is an **API-key-gated public-SDK endpoint**, not
+part of the admin/operator surface that flipped to camelCase in the
+BaoBox `ι` (iota) epic. The server schema on that route still uses
+snake_case (`tenant_id`, `tool_call_id`). SDK 0.8.0 incorrectly bundled
+it into the admin hard-cutover and sent `tenantId` on the wire — every
+`client.tools.invoke()` call against a 0.8.0 SDK got a 400 from the
+server (`tenant_id: Invalid input: expected string, received undefined`).
+The response unpack was also broken (`body.data.toolCallId` was
+undefined because the server emits `tool_call_id`).
+
+### Fix
+
+Revert `invokeTool` to the byte-identical 0.7.x wire shape for both
+request and response. No other surface changes — every other admin
+mapper from 0.8.0 stays camelCase.
+
+If BaoBox eventually flips `/api/v1/tools/invoke` to camelCase, it would
+need a `#142`-style dual-emit deprecation window (the route is on the
+public-SDK boundary), and the SDK mapping moves with it in lockstep.
+
+### Migration
+
+Back-compatible. Apps that depend on `client.tools.invoke()` should
+upgrade `@baobox/sdk` to `0.8.1` and remove any direct-`fetch`
+workarounds they applied for this endpoint while 0.8.0 was broken.
+
 ## 0.8.0
 
 Two coordinated wire-shape changes against the BaoBox server, both shipped

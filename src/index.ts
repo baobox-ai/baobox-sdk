@@ -873,17 +873,25 @@ export class BaoBoxClient {
   }
 
   private async invokeTool(req: ToolInvokeRequest): Promise<ToolInvokeResponse> {
+    // 0.8.1 regression fix: /api/v1/tools/invoke is an API-key-gated public
+    // SDK endpoint, NOT part of the ι epic admin/operator camelCase flip.
+    // The server schema still uses snake_case `tenant_id` and `tool_call_id`
+    // for this route. SDK 0.8.0 incorrectly bundled it into the admin hard
+    // cutover; this reverts to the byte-identical 0.7.x wire shape. When
+    // the BaoBox team flips this endpoint to camelCase (which would need a
+    // #142-style dual-emit window for the public boundary), this mapping
+    // moves with it.
     const body = await this.requestApi<{
-      toolCallId: string;
+      tool_call_id: string;
       status: "SUCCESS";
       result: unknown;
     }>("POST", "/api/v1/tools/invoke", {
       tool: req.tool,
-      tenantId: req.tenantId,
+      tenant_id: req.tenantId,
       inputs: req.inputs,
     });
     return {
-      toolCallId: body.data.toolCallId,
+      toolCallId: body.data.tool_call_id,
       status: body.data.status,
       result: body.data.result,
       meta: body.meta,
