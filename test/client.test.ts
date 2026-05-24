@@ -42,8 +42,8 @@ describe("BaoBoxClient constructor", () => {
     const fetch = fakeFetch((url) => {
       calls.push(url);
       return jsonResponse(200, {
-        data: { response: "ok", usage: { input_tokens: 1, output_tokens: 2 } },
-        metadata: { request_id: "r_1", latency_ms: 5 },
+        data: { response: "ok", usage: { inputTokens: 1, outputTokens: 2 } },
+        metadata: { requestId: "r_1", latencyMs: 5 },
       });
     });
     const bb = new BaoBoxClient({
@@ -63,7 +63,7 @@ describe("health", () => {
       seenAuth = (init.headers as Record<string, string> | undefined)?.authorization ?? null;
       return jsonResponse(200, {
         data: { status: "ok", version: "0.1.0" },
-        metadata: { request_id: "r_health", latency_ms: 1 },
+        metadata: { requestId: "r_health", latencyMs: 1 },
       });
     });
 
@@ -91,19 +91,19 @@ describe("chat", () => {
       return jsonResponse(200, {
         data: {
           response: "chased",
-          usage: { input_tokens: 10, output_tokens: 20 },
-          session_id: "ses_new",
+          usage: { inputTokens: 10, outputTokens: 20 },
+          sessionId: "ses_new",
         },
         metadata: {
-          request_id: "r_42",
-          latency_ms: 350,
+          requestId: "r_42",
+          latencyMs: 350,
           model: "minimax",
           trace: [
             {
-              tool_name: "lookup_client_docs",
-              input: { client_id: "cli_01" },
+              toolName: "lookup_client_docs",
+              input: { clientId: "cli_01" },
               output: { missing: ["bank_statement"] },
-              latency_ms: 42,
+              latencyMs: 42,
             },
           ],
         },
@@ -138,7 +138,7 @@ describe("chat", () => {
     expect(r.meta.latencyMs).toBe(350);
     expect(r.meta.trace?.[0]).toEqual({
       toolName: "lookup_client_docs",
-      input: { client_id: "cli_01" },
+      input: { clientId: "cli_01" },
       output: { missing: ["bank_statement"] },
       latencyMs: 42,
     });
@@ -162,7 +162,7 @@ describe("chat", () => {
         error: {
           code: "UNAUTHORIZED",
           message: "Invalid API key",
-          request_id: "r_bad",
+          requestId: "r_bad",
         },
       }),
     );
@@ -197,17 +197,17 @@ describe("admin auth surfaces", () => {
             id: "sk_1",
             name: "Chaser",
             description: "desc",
-            system_prompt: "prompt",
+            systemPrompt: "prompt",
             model: "MiniMax-M2.7",
             temperature: 0.2,
-            max_tokens: 4096,
-            source_url: null,
-            tenant_id: "t_1",
-            created_at: "2026-04-23T00:00:00Z",
-            updated_at: "2026-04-23T00:00:00Z",
+            maxTokens: 4096,
+            sourceUrl: null,
+            tenantId: "t_1",
+            createdAt: "2026-04-23T00:00:00Z",
+            updatedAt: "2026-04-23T00:00:00Z",
           },
         ],
-        metadata: { request_id: "r_skill", latency_ms: 5 },
+        metadata: { requestId: "r_skill", latencyMs: 5 },
       });
     });
 
@@ -230,24 +230,24 @@ describe("admin auth surfaces", () => {
       seenUrl = url;
       return jsonResponse(200, {
         data: {
-          session_id: "ses/1",
+          sessionId: "ses/1",
           events: [
             {
-              id: "evt_1",
-              session_id: "ses/1",
-              request_id: "r_1",
-              run_id: null,
-              event_type: "tool_result",
+              eventId: "evt_1",
+              sessionId: "ses/1",
+              requestId: "r_1",
+              runId: null,
+              eventType: "tool_result",
               content: null,
               metadata: "{\"ok\":true}",
-              token_count: 0,
-              latency_ms: 9,
-              parent_event_id: null,
-              created_at: "2026-04-23T00:00:00Z",
+              tokenCount: 0,
+              latencyMs: 9,
+              parentEventId: null,
+              createdAt: "2026-04-23T00:00:00Z",
             },
           ],
         },
-        metadata: { request_id: "r_tl", latency_ms: 1 },
+        metadata: { requestId: "r_tl", latencyMs: 1 },
       });
     });
 
@@ -285,19 +285,19 @@ describe("admin auth surfaces", () => {
       if (method === "PUT" && url === "https://api.example.com/api/v1/skills/sk_1") {
         return jsonResponse(200, {
           data: {
-            id: "sk_1",
+            skillId: "sk_1",
             name: "Chaser",
             description: "desc",
-            system_prompt: "prompt",
+            systemPrompt: "prompt",
             model: "MiniMax-M2.7",
             temperature: 0.2,
-            max_tokens: 4096,
-            source_url: null,
-            tenant_id: null,
-            created_at: "2026-04-23T00:00:00Z",
-            updated_at: "2026-04-23T00:00:00Z",
+            maxTokens: 4096,
+            sourceUrl: null,
+            tenantId: null,
+            createdAt: "2026-04-23T00:00:00Z",
+            updatedAt: "2026-04-23T00:00:00Z",
           },
-          metadata: { request_id: "r_skill", latency_ms: 1 },
+          metadata: { requestId: "r_skill", latencyMs: 1 },
         });
       }
 
@@ -305,16 +305,16 @@ describe("admin auth surfaces", () => {
         return jsonResponse(200, {
           data: [
             {
-              id: "tool_old",
+              toolId: "tool_old",
               name: "Old Tool",
               description: "desc",
-              input_schema: "{}",
-              handler_type: "builtin",
-              handler_config: "{}",
-              created_at: "2026-04-23T00:00:00Z",
+              inputSchema: "{}",
+              handlerType: "builtin",
+              handlerConfig: "{}",
+              createdAt: "2026-04-23T00:00:00Z",
             },
           ],
-          metadata: { request_id: "r_tools", latency_ms: 1 },
+          metadata: { requestId: "r_tools", latencyMs: 1 },
         });
       }
 
@@ -324,7 +324,7 @@ describe("admin auth surfaces", () => {
       ) {
         return jsonResponse(200, {
           data: { detached: true },
-          metadata: { request_id: "r_detach", latency_ms: 0 },
+          metadata: { requestId: "r_detach", latencyMs: 0 },
         });
       }
 
@@ -334,7 +334,7 @@ describe("admin auth surfaces", () => {
       ) {
         return jsonResponse(200, {
           data: { attached: true },
-          metadata: { request_id: "r_attach", latency_ms: 0 },
+          metadata: { requestId: "r_attach", latencyMs: 0 },
         });
       }
 
@@ -380,12 +380,12 @@ describe("admin auth surfaces", () => {
           id: "tool_1",
           name: "lookup",
           description: "desc",
-          input_schema: "{\"type\":\"object\"}",
-          handler_type: "http",
-          handler_config: "{\"url\":\"https://example.com\"}",
-          created_at: "2026-04-23T00:00:00Z",
+          inputSchema: "{\"type\":\"object\"}",
+          handlerType: "http",
+          handlerConfig: "{\"url\":\"https://example.com\"}",
+          createdAt: "2026-04-23T00:00:00Z",
         },
-        metadata: { request_id: "r_tool", latency_ms: 1 },
+        metadata: { requestId: "r_tool", latencyMs: 1 },
       });
     });
 
@@ -418,12 +418,12 @@ describe("admin and eval helpers", () => {
       seenBody = init.body ? JSON.parse(String(init.body)) : {};
       return jsonResponse(201, {
         data: {
-          id: "key_1",
+          apiKeyId: "key_1",
           key: "skb_raw",
           name: "demo",
-          tenant_id: "t_default",
+          tenantId: "t_default",
         },
-        metadata: { request_id: "r_key", latency_ms: 0 },
+        metadata: { requestId: "r_key", latencyMs: 0 },
       });
     });
 
@@ -453,12 +453,12 @@ describe("admin and eval helpers", () => {
       seenBody = init.body ? JSON.parse(String(init.body)) : null;
       return jsonResponse(201, {
         data: {
-          id: "key_1",
+          apiKeyId: "key_1",
           key: "skb_raw",
           name: "demo",
-          tenant_id: "demo_tenant",
+          tenantId: "demo_tenant",
         },
-        metadata: { request_id: "r_1", latency_ms: 0 },
+        metadata: { requestId: "r_1", latencyMs: 0 },
       });
     });
     const bb = new BaoBoxClient({
@@ -467,7 +467,7 @@ describe("admin and eval helpers", () => {
       fetch,
     });
     const key = await bb.admin.keys.create({ name: "demo", tenantId: "demo_tenant" });
-    expect(seenBody).toEqual({ name: "demo", tenant_id: "demo_tenant" });
+    expect(seenBody).toEqual({ name: "demo", tenantId: "demo_tenant" });
     expect(key.tenantId).toBe("demo_tenant");
   });
 
@@ -477,11 +477,11 @@ describe("admin and eval helpers", () => {
       seenUrl = url;
       return jsonResponse(200, {
         data: {
-          skill_id: "sk/1",
-          version_a: { label: "A", dimensions: [{ score: 3 }] },
-          version_b: { label: "B", dimensions: [{ score: 4 }] },
+          skillId: "sk/1",
+          versionA: { label: "A", dimensions: [{ score: 3 }] },
+          versionB: { label: "B", dimensions: [{ score: 4 }] },
         },
-        metadata: { request_id: "r_cmp", latency_ms: 0 },
+        metadata: { requestId: "r_cmp", latencyMs: 0 },
       });
     });
 
@@ -493,7 +493,7 @@ describe("admin and eval helpers", () => {
 
     const result = await bb.eval.compare({ skillId: "sk/1", a: "v 1", b: "v/2" });
     expect(seenUrl).toBe(
-      "https://api.example.com/api/v1/eval/compare?skill_id=sk%2F1&a=v+1&b=v%2F2",
+      "https://api.example.com/api/v1/eval/compare?skillId=sk%2F1&a=v+1&b=v%2F2",
     );
     expect(result.skillId).toBe("sk/1");
     expect(result.versionA.label).toBe("A");
@@ -511,10 +511,10 @@ describe("workflow", () => {
       return jsonResponse(200, {
         data: {
           response: "drafted",
-          run_id: "wflow_abc123",
-          usage: { input_tokens: 50, output_tokens: 25 },
+          runId: "wflow_abc123",
+          usage: { inputTokens: 50, outputTokens: 25 },
         },
-        metadata: { request_id: "r_wf", latency_ms: 320, model: "MiniMax-M2.7" },
+        metadata: { requestId: "r_wf", latencyMs: 320, model: "MiniMax-M2.7" },
       });
     });
 
@@ -561,10 +561,10 @@ describe("workflow", () => {
         data: {
           response: '```json\\n{"status":"ok","items":["bank_statement"]}\\n```',
           output: { status: "ok", items: ["bank_statement"] },
-          run_id: "wflow_struct",
-          usage: { input_tokens: 9, output_tokens: 4 },
+          runId: "wflow_struct",
+          usage: { inputTokens: 9, outputTokens: 4 },
         },
-        metadata: { request_id: "r_wf_struct", latency_ms: 25 },
+        metadata: { requestId: "r_wf_struct", latencyMs: 25 },
       });
     });
     const bb = new BaoBoxClient({
@@ -610,10 +610,10 @@ describe("workflow", () => {
       jsonResponse(200, {
         data: {
           response: "{}",
-          run_id: "wflow_struct_missing",
-          usage: { input_tokens: 1, output_tokens: 1 },
+          runId: "wflow_struct_missing",
+          usage: { inputTokens: 1, outputTokens: 1 },
         },
-        metadata: { request_id: "r_missing", latency_ms: 10 },
+        metadata: { requestId: "r_missing", latencyMs: 10 },
       }));
     const bb = new BaoBoxClient({
       endpoint: "https://api.example.com",
@@ -643,10 +643,10 @@ describe("workflow", () => {
       return jsonResponse(200, {
         data: {
           response: "ok",
-          run_id: "wflow_def",
-          usage: { input_tokens: 1, output_tokens: 1 },
+          runId: "wflow_def",
+          usage: { inputTokens: 1, outputTokens: 1 },
         },
-        metadata: { request_id: "r_wf2", latency_ms: 10 },
+        metadata: { requestId: "r_wf2", latencyMs: 10 },
       });
     });
     const bb = new BaoBoxClient({
@@ -666,7 +666,7 @@ describe("workflow", () => {
   it("propagates 404 from BaoBox as BaoBoxError", async () => {
     const fetch = fakeFetch(() =>
       jsonResponse(404, {
-        error: { code: "NOT_FOUND", message: "Skill 'sk_missing' not found", request_id: "r_x" },
+        error: { code: "NOT_FOUND", message: "Skill 'sk_missing' not found", requestId: "r_x" },
       }),
     );
     const bb = new BaoBoxClient({
@@ -792,7 +792,7 @@ describe("0.8.0 wire compat — error envelope", () => {
   it("reads error.request_id (legacy snake-only) for back-compat", async () => {
     const fetch = fakeFetch(() =>
       jsonResponse(401, {
-        error: { code: "UNAUTHORIZED", message: "bad", request_id: "r_err_snake" },
+        error: { code: "UNAUTHORIZED", message: "bad", requestId: "r_err_snake" },
       }),
     );
     const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
@@ -814,37 +814,37 @@ describe("runs", () => {
       seen.auth = (init.headers as Record<string, string>).authorization;
       return jsonResponse(200, {
         data: {
-          run_id: "wflow_abc123",
+          runId: "wflow_abc123",
           events: [
             {
               id: "evt_1",
-              session_id: null,
-              request_id: "req_1",
-              run_id: "wflow_abc123",
-              event_type: "llm_call_start",
+              sessionId: null,
+              requestId: "req_1",
+              runId: "wflow_abc123",
+              eventType: "llm_call_start",
               content: null,
               metadata: { round: 0 },
-              token_count: 0,
-              latency_ms: 0,
-              parent_event_id: null,
-              created_at: "2026-04-25T10:00:00Z",
+              tokenCount: 0,
+              latencyMs: 0,
+              parentEventId: null,
+              createdAt: "2026-04-25T10:00:00Z",
             },
             {
               id: "evt_2",
-              session_id: null,
-              request_id: "req_1",
-              run_id: "wflow_abc123",
-              event_type: "human_approved",
+              sessionId: null,
+              requestId: "req_1",
+              runId: "wflow_abc123",
+              eventType: "human_approved",
               content: "Looks good",
               metadata: { staff_user: "alice" },
-              token_count: 0,
-              latency_ms: 0,
-              parent_event_id: null,
-              created_at: "2026-04-25T10:00:30Z",
+              tokenCount: 0,
+              latencyMs: 0,
+              parentEventId: null,
+              createdAt: "2026-04-25T10:00:30Z",
             },
           ],
         },
-        metadata: { request_id: "r_runs_get", latency_ms: 5 },
+        metadata: { requestId: "r_runs_get", latencyMs: 5 },
       });
     });
 
@@ -873,23 +873,23 @@ describe("runs", () => {
       return jsonResponse(200, {
         data: [
           {
-            call_log_id: "log_1",
-            request_id: "req_1",
-            run_id: "wflow_1",
-            skill_id: "sk_chase",
-            client_id: "client_X",
-            external_request_id: "ext_1",
-            input_tokens: 100,
-            output_tokens: 50,
-            total_tokens: 150,
-            latency_ms: 320,
-            tool_calls_count: 1,
+            callLogId: "log_1",
+            requestId: "req_1",
+            runId: "wflow_1",
+            skillId: "sk_chase",
+            clientId: "client_X",
+            externalRequestId: "ext_1",
+            inputTokens: 100,
+            outputTokens: 50,
+            totalTokens: 150,
+            latencyMs: 320,
+            toolCallsCount: 1,
             status: "success",
-            error_code: null,
-            created_at: "2026-04-25T10:00:00Z",
+            errorCode: null,
+            createdAt: "2026-04-25T10:00:00Z",
           },
         ],
-        metadata: { request_id: "r_runs_list", latency_ms: 3 },
+        metadata: { requestId: "r_runs_list", latencyMs: 3 },
       });
     });
 
@@ -906,7 +906,7 @@ describe("runs", () => {
     });
 
     expect(seenUrl).toContain("/api/v1/admin/runs?");
-    expect(seenUrl).toContain("client_id=client_X");
+    expect(seenUrl).toContain("clientId=client_X");
     expect(seenUrl).toContain("since=2026-04-01T00%3A00%3A00Z");
     expect(seenUrl).toContain("limit=25");
     expect(runs).toHaveLength(1);
@@ -924,7 +924,7 @@ describe("runs", () => {
       seenUrl = url;
       return jsonResponse(200, {
         data: [],
-        metadata: { request_id: "r_runs_empty", latency_ms: 1 },
+        metadata: { requestId: "r_runs_empty", latencyMs: 1 },
       });
     });
 
@@ -946,11 +946,11 @@ describe("runs", () => {
       seen.auth = (init.headers as Record<string, string>).authorization;
       return jsonResponse(201, {
         data: {
-          id: "evt_appended_1",
-          run_id: "wflow_abc123",
-          event_type: "human_approved",
+          eventId: "evt_appended_1",
+          runId: "wflow_abc123",
+          eventType: "human_approved",
         },
-        metadata: { request_id: "r_append", latency_ms: 2 },
+        metadata: { requestId: "r_append", latencyMs: 2 },
       });
     });
 
@@ -969,7 +969,7 @@ describe("runs", () => {
     expect(seen.url).toBe("https://api.example.com/api/v1/admin/runs/wflow_abc123/events");
     expect(seen.auth).toBe("Bearer adm");
     expect(seen.body).toEqual({
-      event_type: "human_approved",
+      eventType: "human_approved",
       content: "Looks good — sending.",
       metadata: { staff_user: "alice", reviewed_at: "2026-04-25T10:00:30Z" },
     });
@@ -984,11 +984,11 @@ describe("runs", () => {
       seenBody = JSON.parse(String(init.body));
       return jsonResponse(201, {
         data: {
-          id: "evt_min",
-          run_id: "wflow_min",
-          event_type: "external_send",
+          eventId: "evt_min",
+          runId: "wflow_min",
+          eventType: "external_send",
         },
-        metadata: { request_id: "r_min", latency_ms: 1 },
+        metadata: { requestId: "r_min", latencyMs: 1 },
       });
     });
 
@@ -999,13 +999,13 @@ describe("runs", () => {
     });
 
     await bb.runs.appendEvent("wflow_min", { eventType: "external_send" });
-    expect(seenBody).toEqual({ event_type: "external_send" });
+    expect(seenBody).toEqual({ eventType: "external_send" });
   });
 
   it("get() propagates 404 from BaoBox as BaoBoxError", async () => {
     const fetch = fakeFetch(() =>
       jsonResponse(404, {
-        error: { code: "NOT_FOUND", message: "Run 'wflow_x' not found", request_id: "r_404" },
+        error: { code: "NOT_FOUND", message: "Run 'wflow_x' not found", requestId: "r_404" },
       }),
     );
     const bb = new BaoBoxClient({
@@ -1051,11 +1051,11 @@ describe("tools.invoke (M5 — direct tool dispatch)", () => {
       capturedInit = init;
       return jsonResponse(200, {
         data: {
-          tool_call_id: "tcl_abc123",
+          toolCallId: "tcl_abc123",
           status: "SUCCESS",
           result: { providerMessageId: "msg_42", status: "SUCCESS" },
         },
-        metadata: { request_id: "req_a", latency_ms: 17 },
+        metadata: { requestId: "req_a", latencyMs: 17 },
       });
     });
     const bb = new BaoBoxClient({
@@ -1080,7 +1080,7 @@ describe("tools.invoke (M5 — direct tool dispatch)", () => {
     const sentBody = JSON.parse(String(capturedInit.body));
     expect(sentBody).toEqual({
       tool: "send_email",
-      tenant_id: "tnt_a",
+      tenantId: "tnt_a",
       inputs: { to: "c@example.com", subject: "Hi", body: "B" },
     });
     expect(result.toolCallId).toBe("tcl_abc123");
@@ -1096,7 +1096,7 @@ describe("tools.invoke (M5 — direct tool dispatch)", () => {
         error: {
           code: "FORBIDDEN",
           message: "API key bound to tenant 't_a' cannot invoke for tenant 't_b'",
-          request_id: "req_x",
+          requestId: "req_x",
         },
       }),
     );
@@ -1122,7 +1122,7 @@ describe("tools.invoke (M5 — direct tool dispatch)", () => {
         error: {
           code: "INTERNAL_ERROR",
           message: "An internal error occurred",
-          request_id: "req_y",
+          requestId: "req_y",
         },
       }),
     );
@@ -1144,7 +1144,7 @@ describe("tools.invoke (M5 — direct tool dispatch)", () => {
   it("refuses to invoke when only adminSecret is configured (no apiKey)", async () => {
     const fetch = fakeFetch(() =>
       jsonResponse(200, {
-        data: { tool_call_id: "x", status: "SUCCESS", result: null },
+        data: { toolCallId: "x", status: "SUCCESS", result: null },
         metadata: {},
       }),
     );
@@ -1244,10 +1244,10 @@ describe("attachments wire conversion on workflow() / chat()", () => {
       return jsonResponse(200, {
         data: {
           response: "ok",
-          run_id: "wflow_att",
-          usage: { input_tokens: 1, output_tokens: 1 },
+          runId: "wflow_att",
+          usage: { inputTokens: 1, outputTokens: 1 },
         },
-        metadata: { request_id: "r_att", latency_ms: 10 },
+        metadata: { requestId: "r_att", latencyMs: 10 },
       });
     });
     const bb = new BaoBoxClient({
@@ -1312,10 +1312,10 @@ describe("attachments wire conversion on workflow() / chat()", () => {
       return jsonResponse(200, {
         data: {
           response: "ok",
-          usage: { input_tokens: 1, output_tokens: 1 },
-          session_id: "ses_x",
+          usage: { inputTokens: 1, outputTokens: 1 },
+          sessionId: "ses_x",
         },
-        metadata: { request_id: "r_chat_att", latency_ms: 5 },
+        metadata: { requestId: "r_chat_att", latencyMs: 5 },
       });
     });
     const bb = new BaoBoxClient({
@@ -1343,10 +1343,10 @@ describe("attachments wire conversion on workflow() / chat()", () => {
       return jsonResponse(200, {
         data: {
           response: "ok",
-          run_id: "wflow_noatt",
-          usage: { input_tokens: 1, output_tokens: 1 },
+          runId: "wflow_noatt",
+          usage: { inputTokens: 1, outputTokens: 1 },
         },
-        metadata: { request_id: "r_noatt", latency_ms: 5 },
+        metadata: { requestId: "r_noatt", latencyMs: 5 },
       });
     });
     const bb = new BaoBoxClient({
@@ -1370,10 +1370,10 @@ describe("attachments wire conversion on workflow() / chat()", () => {
       return jsonResponse(200, {
         data: {
           response: "ok",
-          run_id: "wflow_empty",
-          usage: { input_tokens: 1, output_tokens: 1 },
+          runId: "wflow_empty",
+          usage: { inputTokens: 1, outputTokens: 1 },
         },
-        metadata: { request_id: "r_empty", latency_ms: 5 },
+        metadata: { requestId: "r_empty", latencyMs: 5 },
       });
     });
     const bb = new BaoBoxClient({
@@ -1490,10 +1490,10 @@ describe("attachmentWithStrategy (0.7.0)", () => {
       return jsonResponse(200, {
         data: {
           response: "ok",
-          run_id: "wflow_ws",
-          usage: { input_tokens: 1, output_tokens: 1 },
+          runId: "wflow_ws",
+          usage: { inputTokens: 1, outputTokens: 1 },
         },
-        metadata: { request_id: "r_ws", latency_ms: 1 },
+        metadata: { requestId: "r_ws", latencyMs: 1 },
       });
     });
     const bb = new BaoBoxClient({

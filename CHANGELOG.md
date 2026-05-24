@@ -2,37 +2,89 @@
 
 ## 0.8.0
 
-Coordinates with the server-side camelCase wire migration. The server has
-started emitting public `/api/v1/workflow` and `/api/v1/chat` responses in
-BOTH camelCase (preferred) AND snake_case (deprecated) during the Phase-1
-deprecation window — this release lets the SDK keep parsing both shapes so
-applications stay forward-compatible when the server eventually drops the
-snake variants (Phase 3, separate release).
+Two coordinated wire-shape changes against the BaoBox server, both shipped
+together because 0.8.0 has not been published yet.
 
-### Changed
+### Public-SDK boundary (`chat()` + `workflow()`) — dual-shape compat
 
-- `chat()` and `workflow()` now SEND camelCase on the wire (`skillId`,
+The server emits public `/api/v1/workflow` and `/api/v1/chat` responses in
+BOTH camelCase (preferred) AND snake_case (deprecated) during a Phase-1
+deprecation window. This release lets the SDK parse both so applications
+stay forward-compatible when the server eventually drops snake (Phase 3,
+future release).
+
+- `chat()` and `workflow()` SEND camelCase on the wire (`skillId`,
   `sessionId`, `clientId`, `requestId`, `outputSchema`). The server accepts
   either shape but logs a deprecation telemetry row whenever the snake form
-  is used — this change opts every SDK user out of that noise immediately.
+  is used — this opts every SDK user out of that noise immediately.
 - Response parsers prefer camelCase fields and fall back to snake_case so
   the SDK works against a Phase-1 server (both shapes), a Phase-3 server
-  (camelCase only), and the legacy pre-Phase-1 server (snake only). No
-  user-visible API change — the camelCase surface stays exactly as before.
-- Error envelope parser reads `error.requestId` first, then falls back to
-  `error.request_id` — same forward-compat reasoning.
+  (camelCase only), and the legacy pre-Phase-1 server (snake only).
+- Error envelope parser reads `error.requestId` first, falls back to
+  `error.request_id`.
+
+### Admin surface — hard cutover to camelCase
+
+The BaoBox admin / operator surface (`/api/v1/skills`, `/api/v1/tools`,
+`/api/v1/sessions`, `/api/v1/admin/*`, `/api/v1/eval/*`) silently flipped
+from snake_case to camelCase in the server's `ι` (iota) epic, but no SDK
+release went out alongside. SDK 0.7.x silently returned objects with
+`undefined` IDs (e.g. `skill.id === undefined` on `client.skills.list()`),
+which broke caller-side name→id resolution paths in the field.
+
+This release rewires every admin/operator mapper to read camelCase. Unlike
+the public-SDK boundary above, there's no dual-read fallback — the server
+admin surface has been camelCase-only for several weeks already, so a
+fallback layer would be dead code.
+
+Mappers updated (every read site flipped to camelCase, request bodies
+flipped to camelCase, `id` rewired to the entity-specific key the server
+now emits — `skillId`, `toolId`, `eventId`, `evalCaseId`, `evalRunId`,
+`evalRunResultId`, `taskId`, `apiKeyId`, `skillSecretId`, `skillFileId`,
+`messageId`, `sessionId`, `callLogId`):
+
+- `mapSession`, `mapSessionMessage`, `mapEvent`
+- `mapSkill`, `mapSkillWithFiles`, `mapSkillFileSummary`, `mapSkillFile`
+- `mapTool`, `mapSkillSecretSummary`
+- `mapScheduledTask`
+- `mapEvalCase`, `mapEvalRunExecution`, `mapEvalRunResultSummary`,
+  `mapEvalRun`, `mapEvalRunResult`, plus `getEvalStats` / `compareEvalVersions`
+- `mapWorkflowRunSummary`, `getRunTimeline`, `listRuns`, `appendRunEvent`
+- `createApiKey` (response body)
+- `invokeTool` (response body)
+
+Outbound bodies likewise flipped to camelCase (`createTool`, `createSession`,
+`createApiKey`, `createScheduledTask`, `createEvalTest`, `runEval`,
+`appendRunEvent`, `buildSkillWriteBody`). The `id` field of the SDK-level
+domain types (`Skill.id`, `Tool.id`, etc.) is unchanged — only the wire
+mapping was wrong.
+
+Attachment metadata fields (`att_id`, `mime_type`, `bytes_base64`,
+`parse_strategy`, etc.) intentionally stay snake_case — that wire is
+covered by the §10.2 external-metadata carve-out and the server still
+expects/emits the snake form.
 
 ### Migration
 
-Back-compatible. Existing applications using `bb.chat()` / `bb.workflow()`
-need no code change.
+Back-compatible at the SDK public-API surface. Applications using `bb.chat()`,
+`bb.workflow()`, `bb.skills.*`, `bb.tools.*`, `bb.sessions.*`, etc. need no
+code change. Acceptance check for the admin surface:
+
+```ts
+const skills = await bb.skills.list();
+console.log(skills.map((s) => s.id)); // every entry must be a non-empty `sk_…`
+```
 
 ### Why
 
 The server-side migration ships a ~2-week deprecation window where both
-shapes are accepted on inbound and both are emitted on outbound. Phase 3
-(snake-case removed) is gated on telemetry confirming integrator traffic
-has fully moved to camelCase.
+shapes are accepted on inbound and both are emitted on outbound for the
+public boundary. Phase 3 (snake removed on public boundary) is gated on
+telemetry confirming integrator traffic has fully moved to camelCase. The
+admin/operator surface ships hard-cutover because (1) it has been
+camelCase-only for several weeks already, (2) the SDK was the only known
+consumer still on snake-only reads, and (3) every existing consumer of the
+old snake API was already broken before this release.
 
 ## 0.7.1
 
