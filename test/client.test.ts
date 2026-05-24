@@ -1050,8 +1050,12 @@ describe("tools.invoke (M5 — direct tool dispatch)", () => {
       capturedUrl = url;
       capturedInit = init;
       return jsonResponse(200, {
+        // 0.8.1: server-side schema for /api/v1/tools/invoke is still
+        // snake_case (the route is API-key gated, outside the ι epic's
+        // admin/operator hard cutover). Test fixture mirrors the actual
+        // server shape; the SDK maps snake → camel at the boundary.
         data: {
-          toolCallId: "tcl_abc123",
+          tool_call_id: "tcl_abc123",
           status: "SUCCESS",
           result: { providerMessageId: "msg_42", status: "SUCCESS" },
         },
@@ -1080,7 +1084,7 @@ describe("tools.invoke (M5 — direct tool dispatch)", () => {
     const sentBody = JSON.parse(String(capturedInit.body));
     expect(sentBody).toEqual({
       tool: "send_email",
-      tenantId: "tnt_a",
+      tenant_id: "tnt_a",
       inputs: { to: "c@example.com", subject: "Hi", body: "B" },
     });
     expect(result.toolCallId).toBe("tcl_abc123");
@@ -1144,7 +1148,7 @@ describe("tools.invoke (M5 — direct tool dispatch)", () => {
   it("refuses to invoke when only adminSecret is configured (no apiKey)", async () => {
     const fetch = fakeFetch(() =>
       jsonResponse(200, {
-        data: { toolCallId: "x", status: "SUCCESS", result: null },
+        data: { tool_call_id: "x", status: "SUCCESS", result: null },
         metadata: {},
       }),
     );
