@@ -104,49 +104,62 @@ type RawMetadata = {
   }>;
 };
 
+// 0.8.0 admin surface (#142 sibling fix): every admin route now emits
+// camelCase fields and renames the entity primary key (`id` → `skillId`,
+// `toolId`, `evalCaseId`, etc.). The mappers below read those camelCase
+// fields and translate to the domain types (which keep the shorter `id`
+// shape for ergonomics). This was previously snake_case in 0.7.x and
+// silently broke every admin caller when the BaoBox server shipped its
+// camelCase epic without a coordinated SDK release.
 type RawSession = {
-  id: string;
-  skill_id: string;
-  tenant_id: string | null;
-  created_at: string;
-  updated_at: string;
+  sessionId: string;
+  skillId: string;
+  tenantId: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type RawSessionMessage = {
-  id: number;
-  session_id: string;
+  messageId: number;
+  sessionId: string;
   role: SessionMessage["role"];
   content: string;
-  token_count: number;
-  created_at: string;
+  tokenCount: number;
+  createdAt: string;
 };
 
 type RawEvent = {
-  id: string;
-  session_id: string | null;
-  request_id: string | null;
-  run_id?: string | null;
-  event_type: Event["eventType"];
+  eventId: string;
+  sessionId: string | null;
+  requestId: string | null;
+  runId?: string | null;
+  eventType: Event["eventType"];
   content: string | null;
   metadata: unknown;
-  token_count: number;
-  latency_ms: number;
-  parent_event_id: string | null;
-  created_at: string;
+  tokenCount: number;
+  latencyMs: number;
+  parentEventId: string | null;
+  createdAt: string;
 };
 
 type RawSkill = {
-  id: string;
+  skillId: string;
   name: string;
   description: string;
-  system_prompt: string;
+  systemPrompt: string;
   model: string;
   temperature: number;
-  max_tokens: number;
-  source_url: string | null;
-  tenant_id: string | null;
-  created_at: string;
-  updated_at: string;
+  maxTokens: number;
+  sourceUrl: string | null;
+  tenantId: string | null;
+  // η.1 / B-3 — per-skill attachment policy. Optional on the SDK side so a
+  // pre-η.1 server (which omits the fields) doesn't break the mapper.
+  attachmentDefault?: string;
+  attachmentMaxCount?: number;
+  attachmentMaxSizeMb?: number;
+  fileLoadMode?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type RawSkillWithFiles = RawSkill & {
@@ -159,32 +172,32 @@ type RawSkillWithFiles = RawSkill & {
 type RawSkillFileSummary = {
   path: string;
   size: number;
-  updated_at: string;
+  updatedAt: string;
 };
 
 type RawSkillFile = {
-  id: string;
-  skill_id: string;
+  skillFileId: string;
+  skillId: string;
   path: string;
   content: string;
-  created_at: string;
-  updated_at: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type RawTool = {
-  id: string;
+  toolId: string;
   name: string;
   description: string;
-  input_schema: string;
-  handler_type: Tool["handlerType"];
-  handler_config: string;
-  created_at: string;
+  inputSchema: string;
+  handlerType: Tool["handlerType"];
+  handlerConfig: string;
+  createdAt: string;
 };
 
 type RawSkillSecretSummary = {
-  id: string;
+  skillSecretId: string;
   key: string;
-  created_at: string;
+  createdAt: string;
 };
 
 type RawApiKey = {
@@ -198,91 +211,91 @@ type RawApiKey = {
 };
 
 type RawCreatedApiKey = {
-  id: string;
+  apiKeyId: string;
   key: string;
   name: string;
-  tenant_id: string;
+  tenantId: string;
 };
 
 type RawScheduledTask = {
-  id: string;
+  taskId: string;
   name: string;
-  skill_id: string;
+  skillId: string;
   prompt: string;
-  telegram_chat_id: number | null;
+  telegramChatId: number | null;
   schedule: string;
   enabled: number;
-  created_at: string;
-  last_run_at: string | null;
+  createdAt: string;
+  lastRunAt: string | null;
 };
 
 type RawEvalCase = {
-  id: string;
-  skill_id: string;
+  evalCaseId: string;
+  skillId: string;
   name: string;
   input: string;
-  expected_behavior: string;
+  expectedBehavior: string;
   dimensions: string;
-  passing_threshold: number;
-  created_at: string;
-  updated_at: string;
+  passingThreshold: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type RawEvalRunExecution = {
-  run_id: string;
+  evalRunId: string;
   status: string;
-  total_cases: number;
+  totalCases: number;
   passed: number;
   failed: number;
-  avg_score: number | null;
+  avgScore: number | null;
   results: Array<{
-    test_case_id: string;
+    evalCaseId: string;
     status: string;
     score: number | null;
     scores: unknown;
     response: string | null;
     reasoning: string | null;
   }>;
-  duration_ms: number;
+  durationMs: number;
 };
 
 type RawEvalRun = {
-  id: string;
-  skill_id: string;
-  prompt_version: string | null;
+  evalRunId: string;
+  skillId: string;
+  promptVersion: string | null;
   status: string;
-  total_cases: number;
+  totalCases: number;
   passed: number;
   failed: number;
-  avg_score: number | null;
+  avgScore: number | null;
   metadata: string;
-  created_at: string;
-  completed_at: string | null;
+  createdAt: string;
+  completedAt: string | null;
 };
 
 type RawEvalRunResult = {
-  id: string;
-  run_id: string;
-  test_case_id: string;
-  session_id: string | null;
+  evalRunResultId: string;
+  evalRunId: string;
+  evalCaseId: string;
+  sessionId: string | null;
   status: string;
   score: number | null;
-  scores_json: string | null;
+  scoresJson: string | null;
   response: string | null;
   reasoning: string | null;
-  latency_ms: number;
+  latencyMs: number;
   /** Added in BaoBox migration 0018; older backends omit it. */
-  llm_input_json?: string | null;
-  created_at: string;
+  llmInputJson?: string | null;
+  createdAt: string;
 };
 
 type RawEvalStats = {
-  skill_id: string;
+  skillId: string;
   period: { since: string };
   summary:
     | {
         total: number;
-        avg_score: number;
+        avgScore: number;
         distribution: Record<string, number>;
       }
     | null;
@@ -290,40 +303,40 @@ type RawEvalStats = {
 };
 
 type RawWorkflowRunSummary = {
-  call_log_id: string;
-  request_id: string;
-  run_id: string | null;
-  skill_id: string | null;
-  client_id: string | null;
-  external_request_id: string | null;
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-  latency_ms: number;
-  tool_calls_count: number;
+  callLogId: string;
+  requestId: string;
+  runId: string | null;
+  skillId: string | null;
+  clientId: string | null;
+  externalRequestId: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  latencyMs: number;
+  toolCallsCount: number;
   status: string;
-  error_code: string | null;
-  created_at: string;
+  errorCode: string | null;
+  createdAt: string;
 };
 
 type RawWorkflowRunTimeline = {
-  run_id: string;
+  runId: string;
   events: RawEvent[];
 };
 
 type RawAppendedRunEvent = {
-  id: string;
-  run_id: string;
-  event_type: CallerPushedEventType;
+  eventId: string;
+  runId: string;
+  eventType: CallerPushedEventType;
 };
 
 type RawEvalCompare = {
-  skill_id: string;
-  version_a: {
+  skillId: string;
+  versionA: {
     label: string;
     dimensions: Record<string, unknown>[];
   };
-  version_b: {
+  versionB: {
     label: string;
     dimensions: Record<string, unknown>[];
   };
@@ -686,7 +699,7 @@ export class BaoBoxClient {
     const body = await this.requestAdmin<RawSession>(
       "POST",
       "/api/v1/sessions",
-      compactObject({ skill_id: req.skillId }),
+      compactObject({ skillId: req.skillId }),
     );
     return mapSession(body.data);
   }
@@ -708,12 +721,12 @@ export class BaoBoxClient {
   }
 
   private async getSessionTimeline(sessionId: string): Promise<SessionTimeline> {
-    const body = await this.requestAdmin<{ session_id: string; events: RawEvent[] }>(
+    const body = await this.requestAdmin<{ sessionId: string; events: RawEvent[] }>(
       "GET",
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/timeline`,
     );
     return {
-      sessionId: body.data.session_id,
+      sessionId: body.data.sessionId,
       events: body.data.events.map(mapEvent),
     };
   }
@@ -844,9 +857,9 @@ export class BaoBoxClient {
     const body = await this.requestAdmin<RawTool>("POST", "/api/v1/tools", {
       name: req.name,
       description: req.description,
-      input_schema: req.inputSchema,
-      handler_type: req.handlerType,
-      handler_config: req.handlerConfig,
+      inputSchema: req.inputSchema,
+      handlerType: req.handlerType,
+      handlerConfig: req.handlerConfig,
     });
     return mapTool(body.data);
   }
@@ -861,16 +874,16 @@ export class BaoBoxClient {
 
   private async invokeTool(req: ToolInvokeRequest): Promise<ToolInvokeResponse> {
     const body = await this.requestApi<{
-      tool_call_id: string;
+      toolCallId: string;
       status: "SUCCESS";
       result: unknown;
     }>("POST", "/api/v1/tools/invoke", {
       tool: req.tool,
-      tenant_id: req.tenantId,
+      tenantId: req.tenantId,
       inputs: req.inputs,
     });
     return {
-      toolCallId: body.data.tool_call_id,
+      toolCallId: body.data.toolCallId,
       status: body.data.status,
       result: body.data.result,
       meta: body.meta,
@@ -938,15 +951,15 @@ export class BaoBoxClient {
     const body = await this.requestAdmin<RawCreatedApiKey>("POST", "/api/v1/admin/keys", compactObject({
       name: req.name,
       permissions: req.permissions,
-      rate_limit: req.rateLimit,
-      expires_at: req.expiresAt,
-      tenant_id: req.tenantId,
+      rateLimit: req.rateLimit,
+      expiresAt: req.expiresAt,
+      tenantId: req.tenantId,
     }));
     return {
-      id: body.data.id,
+      id: body.data.apiKeyId,
       key: body.data.key,
       name: body.data.name,
-      tenantId: body.data.tenant_id,
+      tenantId: body.data.tenantId,
     };
   }
 
@@ -986,9 +999,9 @@ export class BaoBoxClient {
   ): Promise<ScheduledTask | null> {
     const body = await this.requestAdmin<RawScheduledTask | null>("POST", "/api/v1/admin/tasks", compactObject({
       name: req.name,
-      skill_id: req.skillId,
+      skillId: req.skillId,
       prompt: req.prompt,
-      telegram_chat_id: req.telegramChatId,
+      telegramChatId: req.telegramChatId,
       schedule: req.schedule,
     }));
     return body.data ? mapScheduledTask(body.data) : null;
@@ -1033,9 +1046,9 @@ export class BaoBoxClient {
       compactObject({
         name: req.name,
         input: req.input,
-        expected_behavior: req.expectedBehavior,
+        expectedBehavior: req.expectedBehavior,
         dimensions: req.dimensions,
-        passing_threshold: req.passingThreshold,
+        passingThreshold: req.passingThreshold,
       }),
     );
     return mapEvalCase(body.data);
@@ -1051,9 +1064,9 @@ export class BaoBoxClient {
 
   private async runEval(req: RunEvalRequest): Promise<EvalRunExecution> {
     const body = await this.requestAdmin<RawEvalRunExecution>("POST", "/api/v1/eval/run", compactObject({
-      skill_id: req.skillId,
-      test_case_ids: req.testCaseIds,
-      prompt_version: req.promptVersion,
+      skillId: req.skillId,
+      testCaseIds: req.testCaseIds,
+      promptVersion: req.promptVersion,
     }));
     return mapEvalRunExecution(body.data);
   }
@@ -1073,17 +1086,17 @@ export class BaoBoxClient {
     const body = await this.requestAdmin<RawEvalStats>(
       "GET",
       appendQuery("/api/v1/eval/stats", {
-        skill_id: req?.skillId,
+        skillId: req?.skillId,
         since: req?.since,
       }),
     );
     return {
-      skillId: body.data.skill_id,
+      skillId: body.data.skillId,
       period: body.data.period,
       summary: body.data.summary
         ? {
             total: body.data.summary.total,
-            avgScore: body.data.summary.avg_score,
+            avgScore: body.data.summary.avgScore,
             distribution: body.data.summary.distribution,
           }
         : null,
@@ -1095,7 +1108,7 @@ export class BaoBoxClient {
     const body = await this.requestAdmin<EvalFailureRow[]>(
       "GET",
       appendQuery("/api/v1/eval/failures", {
-        skill_id: req?.skillId,
+        skillId: req?.skillId,
         threshold: req?.threshold !== undefined ? String(req.threshold) : undefined,
         limit: req?.limit !== undefined ? String(req.limit) : undefined,
       }),
@@ -1107,15 +1120,15 @@ export class BaoBoxClient {
     const body = await this.requestAdmin<RawEvalCompare>(
       "GET",
       appendQuery("/api/v1/eval/compare", {
-        skill_id: req.skillId,
+        skillId: req.skillId,
         a: req.a,
         b: req.b,
       }),
     );
     return {
-      skillId: body.data.skill_id,
-      versionA: body.data.version_a,
-      versionB: body.data.version_b,
+      skillId: body.data.skillId,
+      versionA: body.data.versionA,
+      versionB: body.data.versionB,
     };
   }
 
@@ -1130,7 +1143,7 @@ export class BaoBoxClient {
       `/api/v1/admin/runs/${encodeURIComponent(runId)}/timeline`,
     );
     return {
-      runId: body.data.run_id,
+      runId: body.data.runId,
       events: body.data.events.map(mapEvent),
     };
   }
@@ -1139,7 +1152,7 @@ export class BaoBoxClient {
     const body = await this.requestAdmin<RawWorkflowRunSummary[]>(
       "GET",
       appendQuery("/api/v1/admin/runs", {
-        client_id: req?.clientId,
+        clientId: req?.clientId,
         since: req?.since,
         limit: req?.limit !== undefined ? String(req.limit) : undefined,
       }),
@@ -1155,16 +1168,16 @@ export class BaoBoxClient {
       "POST",
       `/api/v1/admin/runs/${encodeURIComponent(runId)}/events`,
       compactObject({
-        event_type: req.eventType,
+        eventType: req.eventType,
         content: req.content,
         metadata: req.metadata,
-        parent_event_id: req.parentEventId,
+        parentEventId: req.parentEventId,
       }),
     );
     return {
-      id: body.data.id,
-      runId: body.data.run_id,
-      eventType: body.data.event_type,
+      id: body.data.eventId,
+      runId: body.data.runId,
+      eventType: body.data.eventType,
     };
   }
 
@@ -1324,54 +1337,54 @@ function mapResponseMeta(metadata?: RawMetadata): ResponseMeta {
 
 function mapSession(raw: RawSession): Session {
   return {
-    id: raw.id,
-    skillId: raw.skill_id,
-    tenantId: raw.tenant_id,
-    createdAt: raw.created_at,
-    updatedAt: raw.updated_at,
+    id: raw.sessionId,
+    skillId: raw.skillId,
+    tenantId: raw.tenantId,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
   };
 }
 
 function mapSessionMessage(raw: RawSessionMessage): SessionMessage {
   return {
-    id: raw.id,
-    sessionId: raw.session_id,
+    id: raw.messageId,
+    sessionId: raw.sessionId,
     role: raw.role,
     content: raw.content,
-    tokenCount: raw.token_count,
-    createdAt: raw.created_at,
+    tokenCount: raw.tokenCount,
+    createdAt: raw.createdAt,
   };
 }
 
 function mapEvent(raw: RawEvent): Event {
   return {
-    id: raw.id,
-    sessionId: raw.session_id,
-    requestId: raw.request_id,
-    runId: raw.run_id ?? null,
-    eventType: raw.event_type,
+    id: raw.eventId,
+    sessionId: raw.sessionId,
+    requestId: raw.requestId,
+    runId: raw.runId ?? null,
+    eventType: raw.eventType,
     content: raw.content,
     metadata: toJsonObject(raw.metadata),
-    tokenCount: raw.token_count,
-    latencyMs: raw.latency_ms,
-    parentEventId: raw.parent_event_id,
-    createdAt: raw.created_at,
+    tokenCount: raw.tokenCount,
+    latencyMs: raw.latencyMs,
+    parentEventId: raw.parentEventId,
+    createdAt: raw.createdAt,
   };
 }
 
 function mapSkill(raw: RawSkill): Skill {
   return {
-    id: raw.id,
+    id: raw.skillId,
     name: raw.name,
     description: raw.description,
-    systemPrompt: raw.system_prompt,
+    systemPrompt: raw.systemPrompt,
     model: raw.model,
     temperature: raw.temperature,
-    maxTokens: raw.max_tokens,
-    sourceUrl: raw.source_url,
-    tenantId: raw.tenant_id,
-    createdAt: raw.created_at,
-    updatedAt: raw.updated_at,
+    maxTokens: raw.maxTokens,
+    sourceUrl: raw.sourceUrl,
+    tenantId: raw.tenantId,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
   };
 }
 
@@ -1394,38 +1407,38 @@ function mapSkillFileSummary(raw: RawSkillFileSummary): SkillFileSummary {
   return {
     path: raw.path,
     size: raw.size,
-    updatedAt: raw.updated_at,
+    updatedAt: raw.updatedAt,
   };
 }
 
 function mapSkillFile(raw: RawSkillFile): SkillFile {
   return {
-    id: raw.id,
-    skillId: raw.skill_id,
+    id: raw.skillFileId,
+    skillId: raw.skillId,
     path: raw.path,
     content: raw.content,
-    createdAt: raw.created_at,
-    updatedAt: raw.updated_at,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
   };
 }
 
 function mapTool(raw: RawTool): Tool {
   return {
-    id: raw.id,
+    id: raw.toolId,
     name: raw.name,
     description: raw.description,
-    inputSchema: raw.input_schema,
-    handlerType: raw.handler_type,
-    handlerConfig: raw.handler_config,
-    createdAt: raw.created_at,
+    inputSchema: raw.inputSchema,
+    handlerType: raw.handlerType,
+    handlerConfig: raw.handlerConfig,
+    createdAt: raw.createdAt,
   };
 }
 
 function mapSkillSecretSummary(raw: RawSkillSecretSummary): SkillSecretSummary {
   return {
-    id: raw.id,
+    id: raw.skillSecretId,
     key: raw.key,
-    createdAt: raw.created_at,
+    createdAt: raw.createdAt,
   };
 }
 
@@ -1443,48 +1456,48 @@ function mapApiKey(raw: RawApiKey): ApiKey {
 
 function mapScheduledTask(raw: RawScheduledTask): ScheduledTask {
   return {
-    id: raw.id,
+    id: raw.taskId,
     name: raw.name,
-    skillId: raw.skill_id,
+    skillId: raw.skillId,
     prompt: raw.prompt,
-    telegramChatId: raw.telegram_chat_id,
+    telegramChatId: raw.telegramChatId,
     schedule: raw.schedule,
     enabled: raw.enabled,
-    createdAt: raw.created_at,
-    lastRunAt: raw.last_run_at,
+    createdAt: raw.createdAt,
+    lastRunAt: raw.lastRunAt,
   };
 }
 
 function mapEvalCase(raw: RawEvalCase): EvalCase {
   return {
-    id: raw.id,
-    skillId: raw.skill_id,
+    id: raw.evalCaseId,
+    skillId: raw.skillId,
     name: raw.name,
     input: raw.input,
-    expectedBehavior: raw.expected_behavior,
+    expectedBehavior: raw.expectedBehavior,
     dimensions: raw.dimensions,
-    passingThreshold: raw.passing_threshold,
-    createdAt: raw.created_at,
-    updatedAt: raw.updated_at,
+    passingThreshold: raw.passingThreshold,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
   };
 }
 
 function mapEvalRunExecution(raw: RawEvalRunExecution): EvalRunExecution {
   return {
-    runId: raw.run_id,
+    runId: raw.evalRunId,
     status: raw.status,
-    totalCases: raw.total_cases,
+    totalCases: raw.totalCases,
     passed: raw.passed,
     failed: raw.failed,
-    avgScore: raw.avg_score,
+    avgScore: raw.avgScore,
     results: raw.results.map(mapEvalRunResultSummary),
-    durationMs: raw.duration_ms,
+    durationMs: raw.durationMs,
   };
 }
 
 function mapEvalRunResultSummary(raw: RawEvalRunExecution["results"][number]): EvalRunResultSummary {
   return {
-    testCaseId: raw.test_case_id,
+    testCaseId: raw.evalCaseId,
     status: raw.status,
     score: raw.score,
     scores: raw.scores,
@@ -1495,65 +1508,67 @@ function mapEvalRunResultSummary(raw: RawEvalRunExecution["results"][number]): E
 
 function mapEvalRun(raw: RawEvalRun): Omit<EvalRunWithResults, "results"> {
   return {
-    id: raw.id,
-    skillId: raw.skill_id,
-    promptVersion: raw.prompt_version,
+    id: raw.evalRunId,
+    skillId: raw.skillId,
+    promptVersion: raw.promptVersion,
     status: raw.status,
-    totalCases: raw.total_cases,
+    totalCases: raw.totalCases,
     passed: raw.passed,
     failed: raw.failed,
-    avgScore: raw.avg_score,
+    avgScore: raw.avgScore,
     metadata: raw.metadata,
-    createdAt: raw.created_at,
-    completedAt: raw.completed_at,
+    createdAt: raw.createdAt,
+    completedAt: raw.completedAt,
   };
 }
 
 function mapWorkflowRunSummary(raw: RawWorkflowRunSummary): WorkflowRunSummary {
   return {
-    callLogId: raw.call_log_id,
-    requestId: raw.request_id,
-    runId: raw.run_id,
-    skillId: raw.skill_id,
-    clientId: raw.client_id,
-    externalRequestId: raw.external_request_id,
-    inputTokens: raw.input_tokens,
-    outputTokens: raw.output_tokens,
-    totalTokens: raw.total_tokens,
-    latencyMs: raw.latency_ms,
-    toolCallsCount: raw.tool_calls_count,
+    callLogId: raw.callLogId,
+    requestId: raw.requestId,
+    runId: raw.runId,
+    skillId: raw.skillId,
+    clientId: raw.clientId,
+    externalRequestId: raw.externalRequestId,
+    inputTokens: raw.inputTokens,
+    outputTokens: raw.outputTokens,
+    totalTokens: raw.totalTokens,
+    latencyMs: raw.latencyMs,
+    toolCallsCount: raw.toolCallsCount,
     status: raw.status,
-    errorCode: raw.error_code,
-    createdAt: raw.created_at,
+    errorCode: raw.errorCode,
+    createdAt: raw.createdAt,
   };
 }
 
 function mapEvalRunResult(raw: RawEvalRunResult): EvalRunResult {
   return {
-    id: raw.id,
-    runId: raw.run_id,
-    testCaseId: raw.test_case_id,
-    sessionId: raw.session_id,
+    id: raw.evalRunResultId,
+    runId: raw.evalRunId,
+    testCaseId: raw.evalCaseId,
+    sessionId: raw.sessionId,
     status: raw.status,
     score: raw.score,
-    scoresJson: raw.scores_json,
+    scoresJson: raw.scoresJson,
     response: raw.response,
     reasoning: raw.reasoning,
-    latencyMs: raw.latency_ms,
-    llmInputJson: raw.llm_input_json ?? null,
-    createdAt: raw.created_at,
+    latencyMs: raw.latencyMs,
+    llmInputJson: raw.llmInputJson ?? null,
+    createdAt: raw.createdAt,
   };
 }
 
 function buildSkillWriteBody(req: SkillCreateRequest | SkillUpdateRequest): Record<string, unknown> {
+  // 0.8.0: BaoBox admin surface accepts camelCase request bodies after the
+  // ι epic. The previous snake_case keys are no longer recognized.
   return compactObject({
     name: req.name,
     description: req.description,
-    system_prompt: req.systemPrompt,
+    systemPrompt: req.systemPrompt,
     model: req.model,
     temperature: req.temperature,
-    max_tokens: req.maxTokens,
-    source_url: req.sourceUrl,
+    maxTokens: req.maxTokens,
+    sourceUrl: req.sourceUrl,
     files: req.files,
   });
 }
