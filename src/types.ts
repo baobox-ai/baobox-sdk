@@ -694,7 +694,7 @@ export type SseEvent =
   | { event: "tool_result"; data: { tool_call_id: string; success: boolean; latency_ms: number } }
   | { event: "skill_loaded"; data: { loaded_skill_id: string; loaded_skill_name: string } }
   | { event: "postflight_start"; data: Record<string, never> }
-  | { event: "postflight_pass"; data: { attempt: number } }
+  | { event: "postflight_pass"; data: { attempt: number; latency_ms?: number } }
   | { event: "postflight_block"; data: { reason: string; retry_advisable?: boolean } }
   | { event: "postflight_retry_triggered"; data: { reason: string; retry_hint?: string } }
   | { event: "assistant_message"; data: { content: string; blocks: ContentBlock[] } }
