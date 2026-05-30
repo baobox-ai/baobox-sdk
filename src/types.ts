@@ -390,7 +390,13 @@ export type SetSkillFileResult = {
 
 // --- Tools ---
 
-export type ToolHandlerType = "builtin" | "http";
+// "emit_block" (0.10.0): a server-side no-op handler. When the model calls an
+// emit_block tool, BaoBox validates the call args against the tool's
+// `inputSchema` and packages them into a `structured` ContentBlock
+// (`{ type:"structured", emit_id, schema_ref, data }`) instead of running an
+// external handler. Use it to make a skill produce structured payloads the
+// consumer UI routes on by `schema_ref`. See `StructuredBlock` + `emitSchemaRef`.
+export type ToolHandlerType = "builtin" | "http" | "emit_block";
 
 export type ToolCreateRequest = {
   name: string;
@@ -398,6 +404,15 @@ export type ToolCreateRequest = {
   inputSchema: JsonObject;
   handlerType: ToolHandlerType;
   handlerConfig: JsonObject;
+  /**
+   * Routing key stamped onto the emitted `structured` block's `schema_ref`.
+   * Required when `handlerType: "emit_block"`; ignored otherwise. Free-form —
+   * there is no schema registry. The payload is validated against `inputSchema`
+   * (which must be a root object with `additionalProperties:false` at every
+   * level, every property listed in `required`, no `$ref`, no root `oneOf`).
+   * Defaults to the tool `name` server-side when omitted.
+   */
+  emitSchemaRef?: string | null;
 };
 
 export type ToolUpsertRequest = ToolCreateRequest;
@@ -409,6 +424,8 @@ export type Tool = {
   inputSchema: string;
   handlerType: ToolHandlerType;
   handlerConfig: string;
+  /** Present for `emit_block` tools — the `schema_ref` routing key. Null otherwise. */
+  emitSchemaRef?: string | null;
   createdAt: string;
 };
 
