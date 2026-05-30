@@ -193,6 +193,7 @@ type RawTool = {
   inputSchema: string;
   handlerType: Tool["handlerType"];
   handlerConfig: string;
+  emitSchemaRef?: string | null;
   createdAt: string;
 };
 
@@ -974,6 +975,10 @@ export class BaoBoxClient {
       inputSchema: req.inputSchema,
       handlerType: req.handlerType,
       handlerConfig: req.handlerConfig,
+      // Forwarded only for emit_block tools; harmless (ignored server-side) for
+      // builtin/http. Undefined is dropped by JSON.stringify, so non-emit
+      // callers send nothing extra.
+      emitSchemaRef: req.emitSchemaRef,
     });
     return mapTool(body.data);
   }
@@ -1552,6 +1557,7 @@ function mapTool(raw: RawTool): Tool {
     inputSchema: raw.inputSchema,
     handlerType: raw.handlerType,
     handlerConfig: raw.handlerConfig,
+    emitSchemaRef: raw.emitSchemaRef ?? null,
     createdAt: raw.createdAt,
   };
 }
