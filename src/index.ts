@@ -787,6 +787,11 @@ export class BaoBoxClient {
           }
           if (!eventName || !dataStr) continue;
           const data = safeParseJson(dataStr);
+          // Normalize `done.data.session_id`: backend omits it on
+          // refusal/error paths; SDK consumers see `string | null`.
+          if (eventName === "done" && isJsonObject(data) && !("session_id" in data)) {
+            (data as Record<string, unknown>).session_id = null;
+          }
           yield { event: eventName, data } as SseEvent;
         }
       }

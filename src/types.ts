@@ -695,11 +695,11 @@ export type SseEvent =
   | { event: "skill_loaded"; data: { loaded_skill_id: string; loaded_skill_name: string } }
   | { event: "postflight_start"; data: Record<string, never> }
   | { event: "postflight_pass"; data: { attempt: number } }
-  | { event: "postflight_block"; data: { reason: string; retry_advisable: boolean } }
-  | { event: "postflight_retry_triggered"; data: { retry_hint: string } }
+  | { event: "postflight_block"; data: { reason: string; retry_advisable?: boolean } }
+  | { event: "postflight_retry_triggered"; data: { reason: string; retry_hint?: string } }
   | { event: "assistant_message"; data: { content: string; blocks: ContentBlock[] } }
   | { event: "refusal"; data: { reason: string; surface: "preflight" | "postflight" } }
-  | { event: "done"; data: { usage?: { input_tokens: number; output_tokens: number }; session_id?: string } }
+  | { event: "done"; data: { usage?: { input_tokens: number; output_tokens: number }; session_id: string | null } }
   | { event: "heartbeat"; data: Record<string, never> }
   | { event: "error"; data: { code: string; message: string } };
 

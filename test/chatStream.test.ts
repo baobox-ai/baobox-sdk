@@ -125,8 +125,8 @@ describe("chatStream — postflight retry sequence", () => {
   it("yields postflight_block → postflight_retry_triggered → postflight_pass → assistant_message → done", async () => {
     const sse = [
       "event: preflight_pass\ndata: {\"latency_ms\":5}\n\n",
-      "event: postflight_block\ndata: {\"reason\":\"unsafe\",\"retry_advisable\":true}\n\n",
-      "event: postflight_retry_triggered\ndata: {\"retry_hint\":\"tone-down\"}\n\n",
+      "event: postflight_block\ndata: {\"reason\":\"unsafe\"}\n\n",
+      "event: postflight_retry_triggered\ndata: {\"reason\":\"unsafe\"}\n\n",
       "event: postflight_pass\ndata: {\"attempt\":2}\n\n",
       "event: assistant_message\ndata: {\"content\":\"sure\",\"blocks\":[]}\n\n",
       "event: done\ndata: {}\n\n",
@@ -135,13 +135,16 @@ describe("chatStream — postflight retry sequence", () => {
     const client = makeClient(vi.fn().mockResolvedValue(makeSseResponse(sse)));
     const events = await collectEvents(client, { message: "risky" });
 
+    // Backend currently emits only `{reason}` for both frames; retry_advisable
+    // and retry_hint are persisted to the events table but not on the wire.
+    // SDK types declare them as optional for forward-compat.
     expect(events[1]).toEqual({
       event: "postflight_block",
-      data: { reason: "unsafe", retry_advisable: true },
+      data: { reason: "unsafe" },
     });
     expect(events[2]).toEqual({
       event: "postflight_retry_triggered",
-      data: { retry_hint: "tone-down" },
+      data: { reason: "unsafe" },
     });
     expect(events[3]).toEqual({ event: "postflight_pass", data: { attempt: 2 } });
   });
@@ -164,7 +167,9 @@ describe("chatStream — refusal", () => {
       event: "refusal",
       data: { reason: "policy", surface: "preflight" },
     });
-    expect(events[2]).toEqual({ event: "done", data: {} });
+    // SDK normalizes missing session_id → null on done frames so consumers see
+    // a consistent `string | null` shape regardless of refusal/happy path.
+    expect(events[2]).toEqual({ event: "done", data: { session_id: null } });
   });
 });
 
