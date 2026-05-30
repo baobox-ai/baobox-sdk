@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.10.1
+
+Adds `latency_ms` to the `postflight_pass` SSE frame type. Backend
+baobox#200 surfaces real `latency_ms` on `postflight_pass` frames (the
+`preflight_pass` shape already carried it since 0.9.0).
+
+### Added
+
+- `postflight_pass` data variant now includes `latency_ms?: number`.
+  **Optional** — 0.9.0/0.10.0 backends omit it; required typing would break
+  client-side null safety against older backends during rollout.
+- README frame table updated to show the new field with the backend version
+  note.
+
+No runtime SDK change — `chatStream()` already passes frame data through
+verbatim and the SDK has no `postflight_pass` normalization.
+
 ## 0.10.0
 
 Producer side for structured blocks — `emit_block` tools. The consumer half

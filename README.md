@@ -96,7 +96,7 @@ for await (const ev of bb.chatStream({ skillId: "sk_a", message: "hi" })) {
 | `tool_call` | `tool_name: string`, `tool_call_id: string` |
 | `tool_result` | `tool_call_id: string`, `success: boolean`, `latency_ms: number` |
 | `skill_loaded` | `loaded_skill_id: string`, `loaded_skill_name: string` |
-| `postflight_pass` | `attempt: number` |
+| `postflight_pass` | `attempt: number`, `latency_ms?: number` *(present on backend 0.9.1+)* |
 | `postflight_block` | `reason: string`, `retry_advisable?: boolean` |
 | `postflight_retry_triggered` | `reason: string`, `retry_hint?: string` |
 | `assistant_message` | `content: string`, `blocks: ContentBlock[]` |

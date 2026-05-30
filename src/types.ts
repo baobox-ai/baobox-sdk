@@ -254,6 +254,10 @@ export type SessionMessage = {
 // types are appended via `client.runs.appendEvent` so a workflow run's
 // timeline can interleave AI activity with surrounding human/external
 // state transitions.
+//
+// B1 (0.11.0): sandwich guardrail event types added — preflight/postflight
+// verdict events, retry/exhausted events, guardrail_disabled, refusal_emitted,
+// and injection_detected.
 export type EventType =
   | "user_message"
   | "assistant_message"
@@ -267,7 +271,19 @@ export type EventType =
   | "human_approved"
   | "human_rejected"
   | "external_send"
-  | "external_reply_received";
+  | "external_reply_received"
+  // B1 — sandwich guardrail events
+  | "preflight_pass"
+  | "preflight_block"
+  | "postflight_pass"
+  | "postflight_redact"
+  | "postflight_block"
+  | "postflight_retry_triggered"
+  | "postflight_retry_exhausted"
+  | "postflight_retry_skipped_side_effects"
+  | "guardrail_disabled"
+  | "refusal_emitted"
+  | "injection_detected";
 
 /**
  * Event types a caller is allowed to push onto a run's timeline via
@@ -711,7 +727,7 @@ export type SseEvent =
   | { event: "tool_result"; data: { tool_call_id: string; success: boolean; latency_ms: number } }
   | { event: "skill_loaded"; data: { loaded_skill_id: string; loaded_skill_name: string } }
   | { event: "postflight_start"; data: Record<string, never> }
-  | { event: "postflight_pass"; data: { attempt: number } }
+  | { event: "postflight_pass"; data: { attempt: number; latency_ms?: number } }
   | { event: "postflight_block"; data: { reason: string; retry_advisable?: boolean } }
   | { event: "postflight_retry_triggered"; data: { reason: string; retry_hint?: string } }
   | { event: "assistant_message"; data: { content: string; blocks: ContentBlock[] } }
