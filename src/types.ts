@@ -232,6 +232,8 @@ export type Session = {
   tenantId: string | null;
   createdAt: string;
   updatedAt: string;
+  /** D1 — arbitrary JSON metadata blob. Null until the first `sessions.updateMetadata()` call. */
+  metadata?: JsonObject | null;
 };
 
 export type SessionCreateRequest = {
@@ -300,6 +302,10 @@ export type CallerPushedEventType =
 
 // session_id is nullable since BaoBox migration 0017 — workflow events
 // only have run_id, not a session. run_id is the workflow correlator.
+//
+// D1 (0.11.0): `actorUserId` added — email of the tenant user who triggered
+// the turn. Null on admin/sandbox paths. Optional so older server responses
+// (which omit the field) remain compatible.
 export type Event = {
   id: string;
   sessionId: string | null;
@@ -312,6 +318,8 @@ export type Event = {
   latencyMs: number;
   parentEventId: string | null;
   createdAt: string;
+  /** D1 — email of the tenant user who triggered the turn. Null on admin/sandbox paths. */
+  actorUserId?: string | null;
 };
 
 export type SessionTimeline = {
@@ -321,6 +329,66 @@ export type SessionTimeline = {
 
 export type EventListRequest = {
   sessionId: string;
+};
+
+// --- Session metadata (D1, 0.11.0) ---
+
+/**
+ * Request body for `client.sessions.updateMetadata()`. Must be a plain
+ * JSON object (not an array or primitive). Serialized length is capped
+ * at 65 536 bytes server-side.
+ */
+export type SessionMetadataUpdateRequest = JsonObject;
+
+export type SessionMetadataUpdateResult = {
+  sessionId: string;
+  metadata: JsonObject;
+};
+
+// --- Guardrail config (B1, 0.11.0) ---
+
+/**
+ * Request body for `client.skills.updateGuardrails()` (tenant-scoped path).
+ * Only addenda can be set via this surface — disabled flags are admin-only.
+ */
+export type SkillGuardrailUpdateRequest = {
+  /** Addendum injected into the pre-flight guard's `{customization}` placeholder. Null to clear. */
+  preflightAddendum?: string | null;
+  /** Addendum injected into the post-flight guard's `{customization}` placeholder. Null to clear. */
+  postflightAddendum?: string | null;
+};
+
+export type SkillGuardrailUpdateResult = {
+  skillId: string;
+  preflightAddendum: string | null;
+  postflightAddendum: string | null;
+};
+
+/**
+ * Request body for `client.admin.skills.setGuardrailDisabled()` (admin-only path).
+ * Can set disabled flags AND addenda on any skill, including system skills.
+ */
+export type AdminSkillGuardrailUpdateRequest = {
+  /** Kill-switch: bypass the pre-flight guard entirely when true. Admin-only. */
+  preflightDisabled?: boolean;
+  /** Kill-switch: bypass the post-flight guard entirely when true. Admin-only. */
+  postflightDisabled?: boolean;
+  /** Addendum injected into the pre-flight guard's `{customization}` placeholder. Null to clear. */
+  preflightAddendum?: string | null;
+  /** Addendum injected into the post-flight guard's `{customization}` placeholder. Null to clear. */
+  postflightAddendum?: string | null;
+};
+
+export type AdminSkillGuardrailUpdateResult = {
+  skillId: string;
+  /** 1 = disabled, 0 = enabled. */
+  preflightDisabled: number;
+  /** 1 = disabled, 0 = enabled. */
+  postflightDisabled: number;
+  preflightAddendum: string | null;
+  postflightAddendum: string | null;
+  /** 1 = system skill, 0 = user skill. */
+  isSystem: number;
 };
 
 // --- Skills ---
