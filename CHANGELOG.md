@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.10.0
+
+Producer side for structured blocks — `emit_block` tools. The consumer half
+(`ContentBlock` / `chatStream()`) shipped in 0.9.0; this release surfaces the
+producer-side type so a skill can be configured to emit `structured` blocks.
+The backend has supported this end-to-end since the ContentBlock contract
+landed — 0.10.0 is a **pure type-surface widening + wire pass-through**, no
+behaviour change.
+
+### Added
+
+- `ToolHandlerType` now includes `"emit_block"` (was `"builtin" | "http"`). An
+  emit_block tool is a server-side no-op: BaoBox validates the model's call args
+  against the tool's `inputSchema` and packages them into a `structured`
+  `ContentBlock` (`{ type:"structured", emit_id, schema_ref, data }`).
+- `ToolCreateRequest.emitSchemaRef?: string | null` — the routing key stamped
+  onto the emitted block's `schema_ref`. Required for `emit_block` tools,
+  ignored otherwise. **Free-form** — there is no schema registry; the payload is
+  validated against `inputSchema` (root object, `additionalProperties:false` at
+  every level, every property in `required`, no `$ref`, no root `oneOf`).
+  Defaults to the tool `name` server-side when omitted. `ToolUpsertRequest`
+  inherits the field.
+- `Tool.emitSchemaRef?: string | null` — round-tripped on reads (`tools.get` /
+  `tools.list`); null for non-emit tools.
+
+### Migration
+
+Back-compatible. Existing `builtin` / `http` tool callers see no change.
+
+```ts
+await client.tools.create({
+  name: 'emit_summary_card',
+  description: 'Emit a summary card as a structured block.',
+  inputSchema: { type: 'object', additionalProperties: false, /* … */ },
+  handlerType: 'emit_block',
+  handlerConfig: {},
+  emitSchemaRef: 'summary_card_v1',
+});
+// The skill lists this tool in `tools:` with no `output_schema`. When the model
+// calls it, the consumer sees a `structured` block with
+// schema_ref === 'summary_card_v1' and the validated payload in `data`.
+```
+
 ## 0.9.0
 
 SSE streaming chat — `client.chatStream()` + `ContentBlock` + `SseEvent` types.
