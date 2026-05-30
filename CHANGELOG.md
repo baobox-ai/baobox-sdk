@@ -1,5 +1,78 @@
 # Changelog
 
+## 0.11.0
+
+B1 guardrail config surfaces + D1 per-staff attribution and session metadata.
+Both features were landed in the backend as part of Epic #170 (Chat Platform).
+This release is a **pure type-surface + method addition** — no breaking changes
+to existing callers.
+
+### Added
+
+#### B1 — Sandwich guardrail configuration
+
+- `EventType` union extended with eleven new guardrail event strings:
+  `preflight_pass`, `preflight_block`, `postflight_pass`, `postflight_redact`,
+  `postflight_block`, `postflight_retry_triggered`, `postflight_retry_exhausted`,
+  `postflight_retry_skipped_side_effects`, `guardrail_disabled`,
+  `refusal_emitted`, `injection_detected`. These appear on the session timeline
+  whenever the sandwich guard runs.
+- `SkillGuardrailUpdateRequest` / `SkillGuardrailUpdateResult` — tenant-scoped
+  addenda-only request/response types.
+- `AdminSkillGuardrailUpdateRequest` / `AdminSkillGuardrailUpdateResult` —
+  admin-only request/response types that also carry `preflightDisabled` /
+  `postflightDisabled` kill-switch flags.
+- `client.skills.updateGuardrails(skillId, req)` — PATCH
+  `/api/v1/skills/:id/guardrails`. Sets `preflightAddendum` /
+  `postflightAddendum` on a tenant-owned skill. Attempting to set
+  `*_disabled` flags via this path returns 400 from the server.
+- `client.admin.skills.setGuardrailDisabled(skillId, req)` — PATCH
+  `/api/v1/admin/skills/:id/guardrails`. Admin-only surface that can set
+  flags and/or addenda on any skill (including system skills).
+
+#### D1 — Per-staff attribution + session metadata
+
+- `Session.metadata?: JsonObject | null` — arbitrary JSON metadata blob on
+  the session. Null until the first `updateMetadata()` call. Optional so
+  pre-D1 server responses remain compatible.
+- `SessionMetadataUpdateRequest` / `SessionMetadataUpdateResult` — request
+  and response types for the metadata PATCH.
+- `client.sessions.updateMetadata(sessionId, metadata)` — PATCH
+  `/api/v1/sessions/:id/metadata`. Body must be a plain JSON object; the
+  server enforces a 65 536-byte cap.
+- `Event.actorUserId?: string | null` — email of the tenant user who
+  triggered the turn. Present on timeline events emitted by authenticated
+  tenant paths; null on admin/sandbox paths; field is absent on pre-D1
+  server responses (optional so older servers don't break the mapper).
+
+### Migration
+
+Back-compatible. Existing callers see no change. To adopt:
+
+```ts
+// B1 — set a preflight addendum on a skill
+await client.skills.updateGuardrails('sk_a', {
+  preflightAddendum: 'Only answer questions about invoices.',
+});
+
+// B1 — disable a guardrail node (admin only)
+await client.admin.skills.setGuardrailDisabled('sk_a', {
+  postflightDisabled: true,
+});
+
+// D1 — attach metadata to a session
+await client.sessions.updateMetadata('ses_abc', {
+  staffUserId: 'usr_123',
+  clientRef: 'client_xyz',
+});
+
+// D1 — read actorUserId from a session timeline event
+const { events } = await client.sessions.timeline('ses_abc');
+for (const ev of events) {
+  if (ev.actorUserId) console.log('triggered by', ev.actorUserId);
+}
+```
+
 ## 0.10.1
 
 Adds `latency_ms` to the `postflight_pass` SSE frame type. Backend

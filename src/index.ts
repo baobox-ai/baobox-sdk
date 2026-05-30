@@ -2,6 +2,8 @@ import { BaoBoxError } from "./errors.js";
 import { MAX_INLINE_BYTES } from "./types.js";
 import type {
   AdminStats,
+  AdminSkillGuardrailUpdateRequest,
+  AdminSkillGuardrailUpdateResult,
   ApiKey,
   AppendedRunEvent,
   AppendRunEventRequest,
@@ -44,6 +46,8 @@ import type {
   Session,
   SessionCreateRequest,
   SessionMessage,
+  SessionMetadataUpdateRequest,
+  SessionMetadataUpdateResult,
   SessionTimeline,
   SetSkillFileRequest,
   SetSkillFileResult,
@@ -54,6 +58,8 @@ import type {
   SkillFile,
   SkillFileReference,
   SkillFileSummary,
+  SkillGuardrailUpdateRequest,
+  SkillGuardrailUpdateResult,
   SkillImportRequest,
   SkillSecretSummary,
   SkillUpdateRequest,
@@ -119,6 +125,9 @@ type RawSession = {
   tenantId: string | null;
   createdAt: string;
   updatedAt: string;
+  // D1 (0.11.0) — null until first PATCH /metadata. Wire sends parsed JSON
+  // (not a raw string), so we accept unknown and normalise in the mapper.
+  metadata?: unknown;
 };
 
 type RawSessionMessage = {
@@ -142,6 +151,9 @@ type RawEvent = {
   latencyMs: number;
   parentEventId: string | null;
   createdAt: string;
+  // D1 (0.11.0) — email of the tenant user who triggered the turn.
+  // Optional: older server responses that predate D1 omit this field.
+  actorUserId?: string | null;
 };
 
 type RawSkill = {
@@ -345,6 +357,28 @@ type RawEvalCompare = {
   };
 };
 
+// B1 (0.11.0) — guardrail PATCH response shapes.
+type RawSkillGuardrailUpdateResult = {
+  skillId: string;
+  preflightAddendum: string | null;
+  postflightAddendum: string | null;
+};
+
+type RawAdminSkillGuardrailUpdateResult = {
+  skillId: string;
+  preflightDisabled: number;
+  postflightDisabled: number;
+  preflightAddendum: string | null;
+  postflightAddendum: string | null;
+  isSystem: number;
+};
+
+// D1 (0.11.0) — session metadata PATCH response shape.
+type RawSessionMetadataUpdateResult = {
+  sessionId: string;
+  metadata: Record<string, unknown>;
+};
+
 export class BaoBoxClient {
   private readonly endpoint: string;
   private readonly apiKey: string | null;
@@ -375,6 +409,13 @@ export class BaoBoxClient {
     };
     skills: {
       upsert: (req: SkillUpsertRequest) => Promise<Skill>;
+      /**
+       * Update guardrail flags and addenda on any skill (B1, admin-only).
+       * Can set `preflightDisabled` / `postflightDisabled` in addition to
+       * addenda. Works on system skills and tenant-owned skills alike.
+       * Corresponds to `PATCH /api/v1/admin/skills/:id/guardrails`.
+       */
+      setGuardrailDisabled: (skillId: string, req: AdminSkillGuardrailUpdateRequest) => Promise<AdminSkillGuardrailUpdateResult>;
     };
     tools: {
       upsert: (req: ToolUpsertRequest) => Promise<Tool>;
@@ -386,6 +427,12 @@ export class BaoBoxClient {
     messages: (sessionId: string) => Promise<SessionMessage[]>;
     timeline: (sessionId: string) => Promise<SessionTimeline>;
     delete: (sessionId: string) => Promise<DeleteResult>;
+    /**
+     * Set the metadata blob on a session (D1). Body must be a plain JSON
+     * object. Serialized length is capped at 65 536 bytes server-side.
+     * Corresponds to `PATCH /api/v1/sessions/:id/metadata`.
+     */
+    updateMetadata: (sessionId: string, metadata: SessionMetadataUpdateRequest) => Promise<SessionMetadataUpdateResult>;
   };
   public readonly skills: {
     list: () => Promise<Skill[]>;
@@ -395,6 +442,13 @@ export class BaoBoxClient {
     save: (req: SkillUpsertRequest) => Promise<Skill>;
     import: (req: SkillImportRequest) => Promise<Skill>;
     delete: (skillId: string) => Promise<DeleteResult>;
+    /**
+     * Update the guardrail addenda for a skill (B1). Tenant-scoped path —
+     * only `preflightAddendum` and `postflightAddendum` can be set. To also
+     * toggle the disabled flags use `client.admin.skills.setGuardrailDisabled`.
+     * Corresponds to `PATCH /api/v1/skills/:id/guardrails`.
+     */
+    updateGuardrails: (skillId: string, req: SkillGuardrailUpdateRequest) => Promise<SkillGuardrailUpdateResult>;
     files: {
       list: (skillId: string) => Promise<SkillFileSummary[]>;
       get: (skillId: string, path: string) => Promise<SkillFile>;
@@ -509,6 +563,7 @@ export class BaoBoxClient {
       },
       skills: {
         upsert: (req) => this.saveSkill(req),
+        setGuardrailDisabled: (id, req) => this.setAdminSkillGuardrails(id, req),
       },
       tools: {
         upsert: (req) => this.createTool(req),
@@ -521,6 +576,7 @@ export class BaoBoxClient {
       messages: (id) => this.listMessages(id),
       timeline: (id) => this.getSessionTimeline(id),
       delete: (id) => this.deleteSession(id),
+      updateMetadata: (id, metadata) => this.updateSessionMetadata(id, metadata),
     };
 
     this.skills = {
@@ -531,6 +587,7 @@ export class BaoBoxClient {
       save: (req) => this.saveSkill(req),
       import: (req) => this.importSkill(req),
       delete: (id) => this.deleteSkill(id),
+      updateGuardrails: (id, req) => this.updateSkillGuardrails(id, req),
       files: {
         list: (id) => this.listSkillFiles(id),
         get: (id, path) => this.getSkillFile(id, path),
@@ -854,6 +911,22 @@ export class BaoBoxClient {
     return body.data;
   }
 
+  // D1 (0.11.0) — set the arbitrary JSON metadata blob on a session.
+  private async updateSessionMetadata(
+    sessionId: string,
+    metadata: SessionMetadataUpdateRequest,
+  ): Promise<SessionMetadataUpdateResult> {
+    const body = await this.requestAdmin<RawSessionMetadataUpdateResult>(
+      "PATCH",
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/metadata`,
+      metadata,
+    );
+    return {
+      sessionId: body.data.sessionId,
+      metadata: body.data.metadata,
+    };
+  }
+
   private async listSkills(): Promise<Skill[]> {
     const body = await this.requestAdmin<RawSkill[]>("GET", "/api/v1/skills");
     return body.data.map(mapSkill);
@@ -916,6 +989,51 @@ export class BaoBoxClient {
       `/api/v1/skills/${encodeURIComponent(skillId)}`,
     );
     return body.data;
+  }
+
+  // B1 (0.11.0) — tenant-scoped: addenda only. Disabled flags → 400 server-side.
+  private async updateSkillGuardrails(
+    skillId: string,
+    req: SkillGuardrailUpdateRequest,
+  ): Promise<SkillGuardrailUpdateResult> {
+    const body = await this.requestAdmin<RawSkillGuardrailUpdateResult>(
+      "PATCH",
+      `/api/v1/skills/${encodeURIComponent(skillId)}/guardrails`,
+      compactObject({
+        preflightAddendum: req.preflightAddendum,
+        postflightAddendum: req.postflightAddendum,
+      }),
+    );
+    return {
+      skillId: body.data.skillId,
+      preflightAddendum: body.data.preflightAddendum,
+      postflightAddendum: body.data.postflightAddendum,
+    };
+  }
+
+  // B1 (0.11.0) — admin-only: flags + addenda on any skill.
+  private async setAdminSkillGuardrails(
+    skillId: string,
+    req: AdminSkillGuardrailUpdateRequest,
+  ): Promise<AdminSkillGuardrailUpdateResult> {
+    const body = await this.requestAdmin<RawAdminSkillGuardrailUpdateResult>(
+      "PATCH",
+      `/api/v1/admin/skills/${encodeURIComponent(skillId)}/guardrails`,
+      compactObject({
+        preflightDisabled: req.preflightDisabled,
+        postflightDisabled: req.postflightDisabled,
+        preflightAddendum: req.preflightAddendum,
+        postflightAddendum: req.postflightAddendum,
+      }),
+    );
+    return {
+      skillId: body.data.skillId,
+      preflightDisabled: body.data.preflightDisabled,
+      postflightDisabled: body.data.postflightDisabled,
+      preflightAddendum: body.data.preflightAddendum,
+      postflightAddendum: body.data.postflightAddendum,
+      isSystem: body.data.isSystem,
+    };
   }
 
   private async listSkillFiles(skillId: string): Promise<SkillFileSummary[]> {
@@ -1463,12 +1581,21 @@ function mapResponseMeta(metadata?: RawMetadata): ResponseMeta {
 }
 
 function mapSession(raw: RawSession): Session {
+  // D1 (0.11.0): metadata is null until first PATCH /metadata. The wire sends
+  // a parsed JSON object (or null) — never a raw string.
+  const metadata =
+    raw.metadata === null || raw.metadata === undefined
+      ? (raw.metadata as null | undefined)
+      : isJsonObject(raw.metadata)
+        ? raw.metadata
+        : null;
   return {
     id: raw.sessionId,
     skillId: raw.skillId,
     tenantId: raw.tenantId,
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
+    ...(metadata !== undefined ? { metadata } : {}),
   };
 }
 
@@ -1496,6 +1623,9 @@ function mapEvent(raw: RawEvent): Event {
     latencyMs: raw.latencyMs,
     parentEventId: raw.parentEventId,
     createdAt: raw.createdAt,
+    // D1 (0.11.0): present when the turn was made by an authenticated tenant
+    // user. Omitted on admin/sandbox paths and on pre-D1 server responses.
+    ...("actorUserId" in raw ? { actorUserId: raw.actorUserId ?? null } : {}),
   };
 }
 
