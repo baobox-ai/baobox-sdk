@@ -16,6 +16,8 @@ import type {
   CallLogRow,
   ChatRequest,
   ChatResponse,
+  ChatStreamRequest,
+  SseEvent,
   CreateApiKeyRequest,
   CreateEvalCaseRequest,
   CreateScheduledTaskRequest,
@@ -587,6 +589,10 @@ export class BaoBoxClient {
     };
   }
 
+  chatStream(req: ChatStreamRequest): AsyncIterable<SseEvent> {
+    return this.streamChat(req);
+  }
+
   async chat(req: ChatRequest): Promise<ChatResponse> {
     // 0.8.0: send camelCase on the wire (server prefers camel; snake
     // accepted during the Phase-1 deprecation window). Read camelCase
@@ -684,6 +690,114 @@ export class BaoBoxClient {
       );
     }
     return response as WorkflowResponse<TOutput> & { output: TOutput };
+  }
+
+  private async *streamChat(req: ChatStreamRequest): AsyncGenerator<SseEvent> {
+    if (!this.apiKey) {
+      throw new Error("BaoBoxClient: apiKey required for chatStream");
+    }
+
+    const url = `${this.endpoint}/api/v1/chat/stream`;
+    const body = compactObject({
+      skillId: req.skillId,
+      message: req.message,
+      sessionId: req.sessionId,
+      metadata: req.metadata,
+      attachments: attachmentsToWire(req.attachments),
+    });
+
+    const controller = new AbortController();
+    const timer =
+      this.timeoutMs > 0
+        ? setTimeout(() => controller.abort(), this.timeoutMs)
+        : null;
+
+    let res: Response;
+    try {
+      res = await this.fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "text/event-stream",
+          authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      const isAbort = err instanceof DOMException && err.name === "AbortError";
+      throw new BaoBoxError(
+        0,
+        isAbort ? "TIMEOUT" : "NETWORK",
+        isAbort
+          ? `chatStream to /api/v1/chat/stream timed out after ${this.timeoutMs}ms`
+          : `Network error calling /api/v1/chat/stream: ${String(err)}`,
+        null,
+        null,
+      );
+    } finally {
+      // Cancel the headers-received deadline — stream may now live forever.
+      if (timer) clearTimeout(timer);
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      const parsed = text.length ? safeParseJson(text) : {};
+      const errObj = (
+        parsed as { error?: { code?: string; message?: string; requestId?: string } }
+      ).error;
+      throw new BaoBoxError(
+        res.status,
+        errObj?.code ?? "HTTP_ERROR",
+        errObj?.message ?? res.statusText,
+        errObj?.requestId ?? null,
+        parsed,
+      );
+    }
+
+    if (!res.body) {
+      throw new BaoBoxError(0, "NETWORK", "chatStream: response has no body", null, null);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Split on double-newline (SSE frame separator).
+        const frames = buffer.split("\n\n");
+        // Last segment may be incomplete — keep it in the buffer.
+        buffer = frames.pop() ?? "";
+
+        for (const frame of frames) {
+          if (!frame.trim()) continue;
+          let eventName = "";
+          let dataStr = "";
+          for (const line of frame.split("\n")) {
+            if (line.startsWith("event: ")) {
+              eventName = line.slice(7).trim();
+            } else if (line.startsWith("data: ")) {
+              dataStr = line.slice(6);
+            }
+          }
+          if (!eventName || !dataStr) continue;
+          const data = safeParseJson(dataStr);
+          // Normalize `done.data.session_id`: backend omits it on
+          // refusal/error paths; SDK consumers see `string | null`.
+          if (eventName === "done" && isJsonObject(data) && !("session_id" in data)) {
+            (data as Record<string, unknown>).session_id = null;
+          }
+          yield { event: eventName, data } as SseEvent;
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   private async getHealth(): Promise<HealthResponse> {
