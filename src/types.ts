@@ -630,6 +630,90 @@ export type EvalCompare = {
   };
 };
 
+// ─── ContentBlock (0.9.0) ─────────────────────────────────────────────────────
+//
+// Discriminated union mirroring `baobox/src/shared/types/content-block.ts`.
+// Kept in sync manually; bump SDK version on any structural change.
+// Addition rule: new block types are added via migration + SDK type bump.
+// The `thinking` type is reserved for future reasoning-model use.
+
+export type TextBlock = {
+  type: "text";
+  text: string;
+};
+
+export type ToolUseBlock = {
+  type: "tool_use";
+  tool_call_id: string;
+  name: string;
+  input: object;
+};
+
+export type ToolResultBlock = {
+  type: "tool_result";
+  tool_call_id: string;
+  output: unknown;
+  is_error?: boolean;
+};
+
+export type StructuredBlock = {
+  type: "structured";
+  emit_id: string;
+  schema_ref: string;
+  data: object;
+};
+
+export type RefusalBlock = {
+  type: "refusal";
+  reason: string;
+};
+
+export type ThinkingBlock = {
+  type: "thinking";
+  text: string;
+};
+
+export type ContentBlock =
+  | TextBlock
+  | ToolUseBlock
+  | ToolResultBlock
+  | StructuredBlock
+  | RefusalBlock
+  | ThinkingBlock;
+
+// ─── SSE event union (0.9.0) ──────────────────────────────────────────────────
+//
+// One variant per frame type on `text/event-stream`. Data payloads use
+// snake_case to match the server wire exactly — do NOT camelCase these.
+// See baobox/src/shared/types/sse.ts for the canonical frame name list.
+
+export type SseEvent =
+  | { event: "preflight_start"; data: Record<string, never> }
+  | { event: "preflight_pass"; data: { latency_ms: number } }
+  | { event: "tool_call"; data: { tool_name: string; tool_call_id: string } }
+  | { event: "tool_result"; data: { tool_call_id: string; success: boolean; latency_ms: number } }
+  | { event: "skill_loaded"; data: { loaded_skill_id: string; loaded_skill_name: string } }
+  | { event: "postflight_start"; data: Record<string, never> }
+  | { event: "postflight_pass"; data: { attempt: number } }
+  | { event: "postflight_block"; data: { reason: string; retry_advisable: boolean } }
+  | { event: "postflight_retry_triggered"; data: { retry_hint: string } }
+  | { event: "assistant_message"; data: { content: string; blocks: ContentBlock[] } }
+  | { event: "refusal"; data: { reason: string; surface: "preflight" | "postflight" } }
+  | { event: "done"; data: { usage?: { input_tokens: number; output_tokens: number }; session_id?: string } }
+  | { event: "heartbeat"; data: Record<string, never> }
+  | { event: "error"; data: { code: string; message: string } };
+
+// ─── ChatStreamRequest (0.9.0) ────────────────────────────────────────────────
+
+/** Request shape for `client.chatStream()`. Same fields as `ChatRequest`. */
+export type ChatStreamRequest = {
+  skillId?: string;
+  message: string;
+  sessionId?: string;
+  metadata?: JsonObject;
+  attachments?: AttachmentInput[];
+};
+
 // ─── Direct tool invocation (M4 endpoint, SDK 0.5.0) ─────────────────────────
 
 /**

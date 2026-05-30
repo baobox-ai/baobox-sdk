@@ -36,6 +36,79 @@ console.log(res.meta.requestId);    // "req_abc123" — matches server log
 console.log(res.meta.trace);        // [{ toolName, input, output, latencyMs }, ...]
 ```
 
+## Streaming chat
+
+`client.chatStream()` returns an `AsyncIterable<SseEvent>` that yields one typed event per SSE frame. Use it when you need live progress (tool calls, postflight retries, streaming token delivery) rather than waiting for the full response.
+
+```typescript
+import { BaoBoxClient } from "@baobox/sdk";
+
+const bb = new BaoBoxClient({
+  endpoint: "https://api.baobox.ai",
+  apiKey: "sk_a",   // your API key
+});
+
+for await (const ev of bb.chatStream({ skillId: "sk_a", message: "hi" })) {
+  switch (ev.event) {
+    case "preflight_start":
+      console.log("checking…");
+      break;
+    case "tool_call":
+      // snake_case per server wire — do NOT camelCase
+      console.log("tool:", ev.data.tool_name, ev.data.tool_call_id);
+      break;
+    case "tool_result":
+      console.log("result:", ev.data.tool_call_id, ev.data.success, ev.data.latency_ms);
+      break;
+    case "skill_loaded":
+      console.log("sub-skill:", ev.data.loaded_skill_name);
+      break;
+    case "assistant_message":
+      // ev.data.blocks is ContentBlock[] — authoritative final set
+      console.log(ev.data.content);
+      for (const block of ev.data.blocks) {
+        if (block.type === "text") console.log(block.text);
+        if (block.type === "structured") console.log(block.schema_ref, block.data);
+      }
+      break;
+    case "refusal":
+      console.warn("refusal:", ev.data.reason, ev.data.surface);
+      break;
+    case "done":
+      console.log("session:", ev.data.session_id, "tokens:", ev.data.usage);
+      break;
+    case "error":
+      console.error(ev.data.code, ev.data.message);
+      break;
+    case "heartbeat":
+      // keepalive — no action needed
+      break;
+  }
+}
+```
+
+### SSE frame payload shapes (snake_case)
+
+| Event | Key fields |
+|---|---|
+| `preflight_start` | — |
+| `preflight_pass` | `latency_ms: number` |
+| `tool_call` | `tool_name: string`, `tool_call_id: string` |
+| `tool_result` | `tool_call_id: string`, `success: boolean`, `latency_ms: number` |
+| `skill_loaded` | `loaded_skill_id: string`, `loaded_skill_name: string` |
+| `postflight_pass` | `attempt: number` |
+| `postflight_block` | `reason: string`, `retry_advisable: boolean` |
+| `postflight_retry_triggered` | `retry_hint: string` |
+| `assistant_message` | `content: string`, `blocks: ContentBlock[]` |
+| `refusal` | `reason: string`, `surface: "preflight" \| "postflight"` |
+| `done` | `session_id?: string`, `usage?: { input_tokens, output_tokens }` |
+| `heartbeat` | — |
+| `error` | `code: string`, `message: string` |
+
+### Timeout behaviour
+
+`timeoutMs` (default 30 000 ms) applies only until the response headers arrive. Once the stream begins, no second timeout is applied — a long LLM turn will not be cut off mid-stream.
+
 ## Multi-tenant usage
 
 BaoBox is a multi-tenant system, but the SDK deliberately has no

@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.9.0
+
+SSE streaming chat — `client.chatStream()` + `ContentBlock` + `SseEvent` types.
+
+### Added
+
+- `ContentBlock` discriminated union (`text | tool_use | tool_result | structured | refusal | thinking`) mirroring the server's canonical block schema. Exported from the package root.
+- `SseEvent` discriminated union — one variant per SSE frame type (`preflight_start`, `preflight_pass`, `tool_call`, `tool_result`, `skill_loaded`, `postflight_start`, `postflight_pass`, `postflight_block`, `postflight_retry_triggered`, `assistant_message`, `refusal`, `done`, `heartbeat`, `error`). Data payloads are snake_case to match the server wire exactly.
+- `ChatStreamRequest` type (same fields as `ChatRequest`).
+- `client.chatStream(req: ChatStreamRequest): AsyncIterable<SseEvent>` — zero-dependency SSE consumer built on `fetch + ReadableStream`. POSTs to `/api/v1/chat/stream` with `Accept: text/event-stream`. The `timeoutMs` deadline fires only until response headers arrive; the stream itself may live for the full LLM turn.
+
+### Implementation notes
+
+- Uses `response.body.getReader()` + `TextDecoder` with a string buffer split on `\n\n`. Handles multi-frame chunks and partial chunks correctly.
+- Non-200 responses throw `BaoBoxError` (same error-mapping as `chat()`).
+- Zero new runtime dependencies.
+
+### Migration
+
+Back-compatible. Existing `chat()` / `workflow()` callers see no change.
+
+```ts
+for await (const ev of client.chatStream({ skillId: 'sk_a', message: 'hello' })) {
+  switch (ev.event) {
+    case 'assistant_message':
+      console.log(ev.data.content);
+      break;
+    case 'tool_call':
+      console.log('tool:', ev.data.tool_name, ev.data.tool_call_id);
+      break;
+    case 'done':
+      console.log('session:', ev.data.session_id);
+      break;
+  }
+}
+```
+
 ## 0.8.1
 
 Regression fix on `client.tools.invoke()` shipped in 0.8.0.
