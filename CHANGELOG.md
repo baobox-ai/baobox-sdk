@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.12.0
+
+Hardens the B1 + D1 surfaces that landed in 0.11.0.
+
+### Fixed
+
+- `client.skills.updateGuardrails()` now targets
+  `PATCH /api/v1/admin/skills/:id/guardrails` instead of
+  `/api/v1/skills/:id/guardrails`, which does not exist on the server.
+  The 0.11.0 release would have returned 404 for every call. The wire
+  body still carries only `preflightAddendum` / `postflightAddendum` —
+  the admin route accepts addenda alone without touching the disabled
+  flags, matching the tenant-safe contract.
+
+### Added
+
+- Unit tests covering the three new methods (request shape, URL encoding,
+  bearer auth, error propagation) plus the `Session.metadata` /
+  `Event.actorUserId` mapper behaviour for both modern and pre-D1
+  server responses.
+- README sections documenting the B1 guardrail config surfaces and the
+  D1 session metadata + per-staff attribution flow.
+
+### Notes
+
+The SDK is bearer-only (no cookie surface). The tenant-portal cookie route
+`/api/v1/tenant-session/skills/:id/guardrails` is unreachable from this
+package by design — see the JSDoc on `updateGuardrails` for the rationale.
+
 ## 0.11.0
 
 B1 guardrail config surfaces + D1 per-staff attribution and session metadata.
