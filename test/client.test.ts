@@ -1487,6 +1487,497 @@ describe("attachmentWithStrategy (0.7.0)", () => {
     expect(viaMethod).toEqual(viaStandalone);
   });
 
+});
+
+// ─── B1 (0.12.0) — guardrail config surfaces ───────────────────────────────
+describe("skills.updateGuardrails (B1)", () => {
+  it("PATCHes the admin guardrails route with addenda only and bearer auth", async () => {
+    const seen: { url?: string; method?: string; body?: unknown; auth?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      seen.body = JSON.parse(String(init.body));
+      seen.auth = (init.headers as Record<string, string>).authorization;
+      return jsonResponse(200, {
+        data: {
+          skillId: "sk_demo",
+          preflightDisabled: 0,
+          postflightDisabled: 0,
+          preflightAddendum: "Only answer invoice questions.",
+          postflightAddendum: null,
+          isSystem: 0,
+        },
+        metadata: { requestId: "r_guard_t", latencyMs: 4 },
+      });
+    });
+
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const result = await bb.skills.updateGuardrails("sk_demo", {
+      preflightAddendum: "Only answer invoice questions.",
+      postflightAddendum: null,
+    });
+
+    expect(seen.method).toBe("PATCH");
+    expect(seen.url).toBe("https://api.example.com/api/v1/admin/skills/sk_demo/guardrails");
+    expect(seen.auth).toBe("Bearer adm");
+    expect(seen.body).toEqual({
+      preflightAddendum: "Only answer invoice questions.",
+      postflightAddendum: null,
+    });
+    expect(result).toEqual({
+      skillId: "sk_demo",
+      preflightAddendum: "Only answer invoice questions.",
+      postflightAddendum: null,
+    });
+  });
+
+  it("URL-encodes skill ids with special characters", async () => {
+    const calls: string[] = [];
+    const fetch = fakeFetch((url) => {
+      calls.push(url);
+      return jsonResponse(200, {
+        data: {
+          skillId: "sk/weird id",
+          preflightDisabled: 0,
+          postflightDisabled: 0,
+          preflightAddendum: "x",
+          postflightAddendum: null,
+          isSystem: 0,
+        },
+        metadata: { requestId: "r_enc", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    await bb.skills.updateGuardrails("sk/weird id", { preflightAddendum: "x" });
+    expect(calls[0]).toBe(
+      "https://api.example.com/api/v1/admin/skills/sk%2Fweird%20id/guardrails",
+    );
+  });
+
+  it("omits undefined fields from the wire body", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return jsonResponse(200, {
+        data: {
+          skillId: "sk_demo",
+          preflightDisabled: 0,
+          postflightDisabled: 0,
+          preflightAddendum: "only-pre",
+          postflightAddendum: null,
+          isSystem: 0,
+        },
+        metadata: { requestId: "r_omit", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    await bb.skills.updateGuardrails("sk_demo", {
+      preflightAddendum: "only-pre",
+    });
+    expect(seenBody).toEqual({ preflightAddendum: "only-pre" });
+    expect("postflightAddendum" in seenBody).toBe(false);
+  });
+});
+
+describe("admin.skills.setGuardrailDisabled (B1)", () => {
+  it("PATCHes the admin route with flags + addenda and surfaces isSystem", async () => {
+    const seen: { url?: string; method?: string; body?: unknown; auth?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      seen.body = JSON.parse(String(init.body));
+      seen.auth = (init.headers as Record<string, string>).authorization;
+      return jsonResponse(200, {
+        data: {
+          skillId: "sk_sys_preflight_v1",
+          preflightDisabled: 1,
+          postflightDisabled: 0,
+          preflightAddendum: null,
+          postflightAddendum: "loosen redaction",
+          isSystem: 1,
+        },
+        metadata: { requestId: "r_guard_a", latencyMs: 5 },
+      });
+    });
+
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const result = await bb.admin.skills.setGuardrailDisabled("sk_sys_preflight_v1", {
+      preflightDisabled: true,
+      postflightAddendum: "loosen redaction",
+    });
+
+    expect(seen.method).toBe("PATCH");
+    expect(seen.url).toBe(
+      "https://api.example.com/api/v1/admin/skills/sk_sys_preflight_v1/guardrails",
+    );
+    expect(seen.auth).toBe("Bearer adm");
+    expect(seen.body).toEqual({
+      preflightDisabled: true,
+      postflightAddendum: "loosen redaction",
+    });
+    expect(result).toEqual({
+      skillId: "sk_sys_preflight_v1",
+      preflightDisabled: 1,
+      postflightDisabled: 0,
+      preflightAddendum: null,
+      postflightAddendum: "loosen redaction",
+      isSystem: 1,
+    });
+  });
+
+  it("supports clearing addenda by passing null", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return jsonResponse(200, {
+        data: {
+          skillId: "sk_demo",
+          preflightDisabled: 0,
+          postflightDisabled: 0,
+          preflightAddendum: null,
+          postflightAddendum: null,
+          isSystem: 0,
+        },
+        metadata: { requestId: "r_clear", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    await bb.admin.skills.setGuardrailDisabled("sk_demo", {
+      preflightAddendum: null,
+      postflightAddendum: null,
+    });
+    expect(seenBody).toEqual({
+      preflightAddendum: null,
+      postflightAddendum: null,
+    });
+  });
+
+  it("propagates 404 as BaoBoxError with skill_not_found code", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(404, {
+        error: { code: "skill_not_found", message: "Skill 'sk_missing' not found" },
+      }),
+    );
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    await expect(
+      bb.admin.skills.setGuardrailDisabled("sk_missing", { preflightDisabled: true }),
+    ).rejects.toMatchObject({
+      status: 404,
+      code: "skill_not_found",
+    });
+  });
+});
+
+// ─── D1 (0.12.0) — session metadata + actorUserId attribution ──────────────
+describe("sessions.updateMetadata (D1)", () => {
+  it("PATCHes /api/v1/sessions/:id/metadata with the metadata blob", async () => {
+    const seen: { url?: string; method?: string; body?: unknown; auth?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      seen.body = JSON.parse(String(init.body));
+      seen.auth = (init.headers as Record<string, string>).authorization;
+      return jsonResponse(200, {
+        data: {
+          sessionId: "ses_demo",
+          metadata: { staffUserId: "usr_demo", clientRef: "client_demo" },
+        },
+        metadata: { requestId: "r_md", latencyMs: 3 },
+      });
+    });
+
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const result = await bb.sessions.updateMetadata("ses_demo", {
+      staffUserId: "usr_demo",
+      clientRef: "client_demo",
+    });
+
+    expect(seen.method).toBe("PATCH");
+    expect(seen.url).toBe("https://api.example.com/api/v1/sessions/ses_demo/metadata");
+    expect(seen.auth).toBe("Bearer adm");
+    expect(seen.body).toEqual({
+      staffUserId: "usr_demo",
+      clientRef: "client_demo",
+    });
+    expect(result).toEqual({
+      sessionId: "ses_demo",
+      metadata: { staffUserId: "usr_demo", clientRef: "client_demo" },
+    });
+  });
+
+  it("URL-encodes session ids", async () => {
+    const calls: string[] = [];
+    const fetch = fakeFetch((url) => {
+      calls.push(url);
+      return jsonResponse(200, {
+        data: { sessionId: "ses with space", metadata: {} },
+        metadata: { requestId: "r_md_enc", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+    await bb.sessions.updateMetadata("ses with space", { foo: 1 });
+    expect(calls[0]).toBe(
+      "https://api.example.com/api/v1/sessions/ses%20with%20space/metadata",
+    );
+  });
+
+  it("propagates 413 ATTACHMENT_TOO_LARGE-equivalent body cap errors", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(413, {
+        error: { code: "metadata_too_large", message: "metadata blob exceeds 65536 bytes" },
+      }),
+    );
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+    await expect(bb.sessions.updateMetadata("ses_big", { huge: "x" })).rejects.toMatchObject({
+      status: 413,
+      code: "metadata_too_large",
+    });
+  });
+});
+
+describe("sessions.get + timeline (D1 — metadata + actorUserId)", () => {
+  it("surfaces Session.metadata when the server returns it", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: {
+          sessionId: "ses_demo",
+          skillId: "sk_demo",
+          tenantId: "t_demo",
+          createdAt: "2026-05-30T00:00:00Z",
+          updatedAt: "2026-05-30T00:00:00Z",
+          metadata: { staffUserId: "usr_demo" },
+        },
+        metadata: { requestId: "r_get", latencyMs: 1 },
+      }),
+    );
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+    const session = await bb.sessions.get("ses_demo");
+    expect(session.metadata).toEqual({ staffUserId: "usr_demo" });
+  });
+
+  it("omits metadata field when the server omits it (pre-D1 compat)", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: {
+          sessionId: "ses_legacy",
+          skillId: "sk_demo",
+          tenantId: null,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+        },
+        metadata: { requestId: "r_legacy", latencyMs: 1 },
+      }),
+    );
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+    const session = await bb.sessions.get("ses_legacy");
+    expect("metadata" in session).toBe(false);
+  });
+
+  it("propagates Session.metadata: null when explicitly null on the wire", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: {
+          sessionId: "ses_cleared",
+          skillId: "sk_demo",
+          tenantId: null,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          metadata: null,
+        },
+        metadata: { requestId: "r_clear", latencyMs: 1 },
+      }),
+    );
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+    const session = await bb.sessions.get("ses_cleared");
+    expect(session.metadata).toBeNull();
+  });
+
+  it("surfaces actorUserId on timeline events when present", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: {
+          sessionId: "ses_demo",
+          events: [
+            {
+              eventId: "evt_1",
+              sessionId: "ses_demo",
+              requestId: "r_1",
+              runId: null,
+              eventType: "user_message",
+              content: "hi",
+              metadata: "{}",
+              tokenCount: 0,
+              latencyMs: 0,
+              parentEventId: null,
+              createdAt: "2026-05-30T00:00:00Z",
+              actorUserId: "alice@example.com",
+            },
+            {
+              eventId: "evt_2",
+              sessionId: "ses_demo",
+              requestId: "r_1",
+              runId: null,
+              eventType: "preflight_pass",
+              content: null,
+              metadata: '{"latency_ms":12,"model":"m","severity":"low"}',
+              tokenCount: 0,
+              latencyMs: 12,
+              parentEventId: null,
+              createdAt: "2026-05-30T00:00:01Z",
+              actorUserId: null,
+            },
+          ],
+        },
+        metadata: { requestId: "r_tl", latencyMs: 1 },
+      }),
+    );
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+    const timeline = await bb.sessions.timeline("ses_demo");
+    expect(timeline.events).toHaveLength(2);
+    expect(timeline.events[0]?.actorUserId).toBe("alice@example.com");
+    expect(timeline.events[1]?.actorUserId).toBeNull();
+    expect(timeline.events[1]?.eventType).toBe("preflight_pass");
+  });
+
+  it("omits actorUserId on pre-D1 server responses", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: {
+          sessionId: "ses_legacy",
+          events: [
+            {
+              eventId: "evt_legacy",
+              sessionId: "ses_legacy",
+              requestId: "r_1",
+              runId: null,
+              eventType: "user_message",
+              content: "hi",
+              metadata: "{}",
+              tokenCount: 0,
+              latencyMs: 0,
+              parentEventId: null,
+              createdAt: "2026-01-01T00:00:00Z",
+            },
+          ],
+        },
+        metadata: { requestId: "r_tl_legacy", latencyMs: 1 },
+      }),
+    );
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+    const timeline = await bb.sessions.timeline("ses_legacy");
+    expect(timeline.events).toHaveLength(1);
+    expect("actorUserId" in (timeline.events[0] ?? {})).toBe(false);
+  });
+
+  it("accepts the new B1 EventType values on the timeline", async () => {
+    const guardrailEventTypes = [
+      "preflight_pass",
+      "preflight_block",
+      "postflight_pass",
+      "postflight_redact",
+      "postflight_block",
+      "postflight_retry_triggered",
+      "postflight_retry_exhausted",
+      "postflight_retry_skipped_side_effects",
+      "guardrail_disabled",
+      "refusal_emitted",
+      "injection_detected",
+    ];
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: {
+          sessionId: "ses_demo",
+          events: guardrailEventTypes.map((eventType, i) => ({
+            eventId: `evt_${i}`,
+            sessionId: "ses_demo",
+            requestId: "r_1",
+            runId: null,
+            eventType,
+            content: null,
+            metadata: "{}",
+            tokenCount: 0,
+            latencyMs: 1,
+            parentEventId: null,
+            createdAt: "2026-05-30T00:00:00Z",
+          })),
+        },
+        metadata: { requestId: "r_b1", latencyMs: 1 },
+      }),
+    );
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+    const timeline = await bb.sessions.timeline("ses_demo");
+    expect(timeline.events.map((e) => e.eventType)).toEqual(guardrailEventTypes);
+  });
+});
+
+describe("legacy parse-strategy piping (round-trip)", () => {
   it("piped attachment sends the overridden parse_strategy over the wire", async () => {
     let seenBody: Record<string, unknown> = {};
     const fetch = fakeFetch((_url, init) => {

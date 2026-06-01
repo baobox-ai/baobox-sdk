@@ -443,10 +443,14 @@ export class BaoBoxClient {
     import: (req: SkillImportRequest) => Promise<Skill>;
     delete: (skillId: string) => Promise<DeleteResult>;
     /**
-     * Update the guardrail addenda for a skill (B1). Tenant-scoped path —
-     * only `preflightAddendum` and `postflightAddendum` can be set. To also
-     * toggle the disabled flags use `client.admin.skills.setGuardrailDisabled`.
-     * Corresponds to `PATCH /api/v1/skills/:id/guardrails`.
+     * Update the guardrail addenda for a skill (B1). Sets only
+     * `preflightAddendum` and `postflightAddendum`. To also toggle the
+     * disabled kill-switches, use `client.admin.skills.setGuardrailDisabled`.
+     *
+     * Uses the admin-bearer path `PATCH /api/v1/admin/skills/:id/guardrails`
+     * (the only bearer-gated guardrail route the server exposes). The
+     * tenant-portal cookie path `/api/v1/tenant-session/skills/:id/guardrails`
+     * is not reachable from this SDK because the SDK is bearer-only.
      */
     updateGuardrails: (skillId: string, req: SkillGuardrailUpdateRequest) => Promise<SkillGuardrailUpdateResult>;
     files: {
@@ -991,14 +995,19 @@ export class BaoBoxClient {
     return body.data;
   }
 
-  // B1 (0.11.0) — tenant-scoped: addenda only. Disabled flags → 400 server-side.
+  // B1 — addenda-only PATCH. The SDK is admin-bearer-only (no cookie surface),
+  // so this hits `/api/v1/admin/skills/:id/guardrails` and omits the disabled
+  // flags from the body. The admin route accepts addenda alone without
+  // touching `*_disabled`. Released-but-broken in 0.11.0 (path was
+  // `/api/v1/skills/:id/guardrails`, which does not exist on the server);
+  // fixed in 0.12.0.
   private async updateSkillGuardrails(
     skillId: string,
     req: SkillGuardrailUpdateRequest,
   ): Promise<SkillGuardrailUpdateResult> {
-    const body = await this.requestAdmin<RawSkillGuardrailUpdateResult>(
+    const body = await this.requestAdmin<RawAdminSkillGuardrailUpdateResult>(
       "PATCH",
-      `/api/v1/skills/${encodeURIComponent(skillId)}/guardrails`,
+      `/api/v1/admin/skills/${encodeURIComponent(skillId)}/guardrails`,
       compactObject({
         preflightAddendum: req.preflightAddendum,
         postflightAddendum: req.postflightAddendum,
