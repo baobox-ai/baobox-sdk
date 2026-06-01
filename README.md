@@ -383,6 +383,84 @@ await bb.admin.tools.upsert({
 
 `bb.admin.skills.upsert()` now targets `/api/v1/skills` and, when `tools` is provided, reconciles the skill's tool attachments via the dedicated tool-association endpoints. `bb.admin.tools.upsert()` now targets `/api/v1/tools`.
 
+### Guardrail configuration (B1) — added in 0.11.0, fixed in 0.12.0
+
+BaoBox runs a "sandwich" guard around every chat turn — a pre-flight classifier
+inspects the input before the main skill runs, and a post-flight reviewer
+inspects the candidate output before it leaves the server. Both guards can
+have tenant-customised addenda injected into their system prompts. Only an
+admin can flip the kill-switches that disable a guard entirely.
+
+```typescript
+// Set the pre-flight addendum on a skill. Tenant-safe surface — addenda only.
+await bb.skills.updateGuardrails("sk_demo", {
+  preflightAddendum: "Only answer questions about the customer's invoices.",
+  postflightAddendum: null, // clear any previous post-flight addendum
+});
+
+// Admin-only kill-switches. Set `preflightDisabled` / `postflightDisabled` to
+// bypass a guard entirely. Works on system skills (e.g. `sk_sys_preflight_v1`)
+// too. Can also set addenda in the same call.
+await bb.admin.skills.setGuardrailDisabled("sk_demo", {
+  postflightDisabled: true,
+  preflightAddendum: "Refuse anything outside the invoice domain.",
+});
+```
+
+The new event types appear on the session timeline whenever the sandwich
+fires: `preflight_pass`, `preflight_block`, `postflight_pass`,
+`postflight_redact`, `postflight_block`, `postflight_retry_triggered`,
+`postflight_retry_exhausted`, `postflight_retry_skipped_side_effects`,
+`guardrail_disabled`, `refusal_emitted`, `injection_detected`.
+
+```typescript
+const timeline = await bb.sessions.timeline("ses_demo");
+for (const event of timeline.events) {
+  if (event.eventType === "preflight_block") {
+    console.warn("blocked at preflight", event.metadata);
+  }
+}
+```
+
+Both methods hit `PATCH /api/v1/admin/skills/:id/guardrails` (the only
+bearer-gated guardrail route the server exposes). The tenant-portal cookie
+path is not reachable from this SDK — `client.skills.updateGuardrails()`
+omits the disabled flags from the body so the admin route only touches
+addenda, matching the tenant contract.
+
+### Session metadata + per-staff attribution (D1) — added in 0.11.0
+
+Sessions carry an arbitrary JSON metadata blob (capped at 65 536 bytes
+serialized). Set it via `sessions.updateMetadata()`:
+
+```typescript
+await bb.sessions.updateMetadata("ses_demo", {
+  staffUserId: "usr_demo",
+  clientRef: "client_demo",
+});
+
+const session = await bb.sessions.get("ses_demo");
+// session.metadata === { staffUserId: "usr_demo", clientRef: "client_demo" }
+```
+
+`Session.metadata` is `JsonObject | null | undefined`. `null` means the
+metadata column was explicitly cleared; `undefined` (field absent on the
+wire) means a pre-D1 server response — treat both as "no metadata set".
+
+Events on the session timeline now carry `actorUserId` — the email of the
+tenant user who triggered the turn. Null on admin/sandbox paths; absent on
+pre-D1 server responses (the SDK omits the field from the parsed event when
+the server didn't send it, so older servers stay compatible).
+
+```typescript
+const timeline = await bb.sessions.timeline("ses_demo");
+for (const event of timeline.events) {
+  if (event.actorUserId) {
+    console.log(event.eventType, "by", event.actorUserId);
+  }
+}
+```
+
 ### Events (timeline alias)
 
 ```typescript
