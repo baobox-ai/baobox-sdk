@@ -340,6 +340,12 @@ BaoBox now splits auth:
 
 ```typescript
 const session = await bb.sessions.create({ skillId: "sk_chase" });
+
+// Multi-tenant consumers: bind the session to a tenant (#239) so it is
+// scoped server-side and cannot read another tenant's data.
+const scoped = await bb.sessions.create({ skillId: "sk_chase", tenantId: "t_123" });
+// scoped.tenantId === "t_123"
+
 const history = await bb.sessions.messages(session.id);
 const timeline = await bb.sessions.timeline(session.id);
 

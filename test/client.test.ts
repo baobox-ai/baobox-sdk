@@ -1778,6 +1778,68 @@ describe("sessions.updateMetadata (D1)", () => {
   });
 });
 
+describe("sessions.create (#239 — tenant binding)", () => {
+  it("sends tenantId in the request body and surfaces it on the returned session", async () => {
+    const seen: { url?: string; body?: Record<string, unknown>; auth?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      seen.auth = (init.headers as Record<string, string>).authorization;
+      return jsonResponse(201, {
+        data: {
+          sessionId: "ses_new",
+          skillId: "sk_test",
+          tenantId: "tenant_99",
+          createdAt: "2026-06-06T00:00:00Z",
+          updatedAt: "2026-06-06T00:00:00Z",
+        },
+        metadata: { requestId: "r_create", latencyMs: 3 },
+      });
+    });
+
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const session = await bb.sessions.create({ skillId: "sk_test", tenantId: "tenant_99" });
+
+    expect(seen.url).toBe("https://api.example.com/api/v1/sessions");
+    expect(seen.body).toEqual({ skillId: "sk_test", tenantId: "tenant_99" });
+    expect(seen.auth).toBe("Bearer adm");
+    expect(session.tenantId).toBe("tenant_99");
+    expect(session.id).toBe("ses_new");
+  });
+
+  it("omits tenantId from the body when not supplied (unscoped session)", async () => {
+    let sentBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      sentBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+      return jsonResponse(201, {
+        data: {
+          sessionId: "ses_plain",
+          skillId: "sk_test",
+          tenantId: null,
+          createdAt: "2026-06-06T00:00:00Z",
+          updatedAt: "2026-06-06T00:00:00Z",
+        },
+        metadata: { requestId: "r_create2", latencyMs: 2 },
+      });
+    });
+
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const session = await bb.sessions.create({ skillId: "sk_test" });
+    expect("tenantId" in sentBody).toBe(false);
+    expect(session.tenantId).toBeNull();
+  });
+});
+
 describe("sessions.get + timeline (D1 — metadata + actorUserId)", () => {
   it("surfaces Session.metadata when the server returns it", async () => {
     const fetch = fakeFetch(() =>

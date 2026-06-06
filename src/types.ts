@@ -238,6 +238,15 @@ export type Session = {
 
 export type SessionCreateRequest = {
   skillId?: string;
+  /**
+   * Bind the new session to a tenant (multi-tenant consumers, #239). The
+   * session's `tenantId` is set server-side and scopes the session so it
+   * cannot read another tenant's data. Sent on the wire as the `tenantId`
+   * body field; the BaoBox server also accepts an `X-BaoBox-Tenant-Id`
+   * header for raw-fetch callers, but the SDK uses the body field. Omit for
+   * an unscoped (single-tenant / admin) session.
+   */
+  tenantId?: string;
 };
 
 export type SessionRole = "user" | "assistant" | "system" | "tool";
