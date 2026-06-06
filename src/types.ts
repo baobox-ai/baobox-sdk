@@ -542,6 +542,15 @@ export type DetachToolResult = {
   detached: boolean;
 };
 
+// #257 — sub-skill (orchestrator graph) attach/detach results.
+export type AttachSkillResult = {
+  attached: boolean;
+};
+
+export type DetachSkillResult = {
+  detached: boolean;
+};
+
 export type SkillSecretSummary = {
   id: string;
   key: string;

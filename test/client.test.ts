@@ -300,6 +300,117 @@ describe("admin auth surfaces", () => {
     expect(called).toBe(false);
   });
 
+  // #257 — tenant-scoped authoring over the per-tenant apiKey.
+  it("skills.create uses the apiKey path and sends the tenant header", async () => {
+    const seen: { url?: string; method?: string; auth?: string; tenant?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      const headers = init.headers as Record<string, string>;
+      seen.auth = headers.authorization;
+      seen.tenant = headers["X-BaoBox-Tenant-Id"];
+      return jsonResponse(201, {
+        data: {
+          id: "sk_new",
+          name: "n",
+          description: "",
+          systemPrompt: "p",
+          model: "MiniMax-M2.7",
+          temperature: 0.7,
+          maxTokens: 4096,
+          sourceUrl: null,
+          tenantId: "t_a",
+          createdAt: "2026-06-06T00:00:00Z",
+          updatedAt: "2026-06-06T00:00:00Z",
+        },
+        metadata: { requestId: "r", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "skb_k", fetch });
+    const skill = await bb.skills.create({ name: "n", systemPrompt: "p" }, { tenantId: "t_a" });
+    expect(seen.method).toBe("POST");
+    expect(seen.url).toBe("https://api.example.com/api/v1/skills");
+    expect(seen.auth).toBe("Bearer skb_k");
+    expect(seen.tenant).toBe("t_a");
+    expect(skill.tenantId).toBe("t_a");
+  });
+
+  it("skills.create rejects `tools` on an apiKey-only client before any write", async () => {
+    let called = false;
+    const fetch = fakeFetch(() => {
+      called = true;
+      return jsonResponse(201, { data: {}, metadata: { requestId: "r", latencyMs: 1 } });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "skb_k", fetch });
+    await expect(
+      bb.skills.create({ name: "n", systemPrompt: "p", tools: ["tool_x"] }, { tenantId: "t_a" }),
+    ).rejects.toThrow(/requires adminSecret/);
+    expect(called).toBe(false);
+  });
+
+  it("skills.attachSkill POSTs the attached-skills route via apiKey + tenant header", async () => {
+    const seen: { url?: string; method?: string; auth?: string; tenant?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      const headers = init.headers as Record<string, string>;
+      seen.auth = headers.authorization;
+      seen.tenant = headers["X-BaoBox-Tenant-Id"];
+      return jsonResponse(200, { data: { attached: true }, metadata: { requestId: "r", latencyMs: 1 } });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "skb_k", fetch });
+    const res = await bb.skills.attachSkill("sk_parent", "sk_child", { tenantId: "t_a" });
+    expect(res.attached).toBe(true);
+    expect(seen.method).toBe("POST");
+    expect(seen.url).toBe("https://api.example.com/api/v1/skills/sk_parent/attached-skills/sk_child");
+    expect(seen.auth).toBe("Bearer skb_k");
+    expect(seen.tenant).toBe("t_a");
+  });
+
+  it("skills.detachSkill DELETEs the attached-skills route", async () => {
+    const seen: { url?: string; method?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      return jsonResponse(200, { data: { detached: true }, metadata: { requestId: "r", latencyMs: 1 } });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "skb_k", fetch });
+    const res = await bb.skills.detachSkill("sk_parent", "sk_child");
+    expect(res.detached).toBe(true);
+    expect(seen.method).toBe("DELETE");
+    expect(seen.url).toBe("https://api.example.com/api/v1/skills/sk_parent/attached-skills/sk_child");
+  });
+
+  it("skills.attachTool POSTs the tools route via apiKey (lifts adminSecret requirement)", async () => {
+    const seen: { url?: string; method?: string; auth?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      seen.auth = (init.headers as Record<string, string>).authorization;
+      return jsonResponse(200, { data: { attached: true }, metadata: { requestId: "r", latencyMs: 1 } });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "skb_k", fetch });
+    const res = await bb.skills.attachTool("sk_1", "tool_send_email", { tenantId: "t_a" });
+    expect(res.attached).toBe(true);
+    expect(seen.method).toBe("POST");
+    expect(seen.url).toBe("https://api.example.com/api/v1/skills/sk_1/tools/tool_send_email");
+    expect(seen.auth).toBe("Bearer skb_k");
+  });
+
+  it("skills.detachTool DELETEs the tools route", async () => {
+    const seen: { url?: string; method?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      return jsonResponse(200, { data: { detached: true }, metadata: { requestId: "r", latencyMs: 1 } });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "skb_k", fetch });
+    const res = await bb.skills.detachTool("sk_1", "tool_send_email");
+    expect(res.detached).toBe(true);
+    expect(seen.method).toBe("DELETE");
+    expect(seen.url).toBe("https://api.example.com/api/v1/skills/sk_1/tools/tool_send_email");
+  });
+
   it("events.list hits session timeline and unwraps the nested response", async () => {
     let seenUrl = "";
     const fetch = fakeFetch((url) => {
