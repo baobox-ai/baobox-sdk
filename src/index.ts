@@ -61,6 +61,7 @@ import type {
   SkillGuardrailUpdateRequest,
   SkillGuardrailUpdateResult,
   SkillImportRequest,
+  SkillScopeOptions,
   SkillSecretSummary,
   SkillUpdateRequest,
   SkillUpsertRequest,
@@ -435,10 +436,27 @@ export class BaoBoxClient {
     updateMetadata: (sessionId: string, metadata: SessionMetadataUpdateRequest) => Promise<SessionMetadataUpdateResult>;
   };
   public readonly skills: {
-    list: () => Promise<Skill[]>;
-    get: (skillId: string) => Promise<SkillWithFiles>;
+    /**
+     * List skills. Pass `{ tenantId }` to scope the result to one tenant's
+     * skills plus global system skills (#247); omit it for the cross-tenant
+     * (global) list. Mirrors `sessions.create({ tenantId })`.
+     */
+    list: (options?: SkillScopeOptions) => Promise<Skill[]>;
+    /**
+     * Get a skill by id. Pass `{ tenantId }` to scope the lookup — a skill
+     * owned by another tenant returns 404 (#247); global skills stay visible.
+     */
+    get: (skillId: string, options?: SkillScopeOptions) => Promise<SkillWithFiles>;
     create: (req: SkillCreateRequest) => Promise<Skill>;
-    update: (skillId: string, req: SkillUpdateRequest) => Promise<Skill>;
+    /**
+     * Update a skill. Pass `{ tenantId }` to scope the write — updating a skill
+     * owned by another tenant returns 404 (#247); global skills stay writable.
+     */
+    update: (
+      skillId: string,
+      req: SkillUpdateRequest,
+      options?: SkillScopeOptions,
+    ) => Promise<Skill>;
     save: (req: SkillUpsertRequest) => Promise<Skill>;
     import: (req: SkillImportRequest) => Promise<Skill>;
     delete: (skillId: string) => Promise<DeleteResult>;
@@ -584,10 +602,10 @@ export class BaoBoxClient {
     };
 
     this.skills = {
-      list: () => this.listSkills(),
-      get: (id) => this.getSkill(id),
+      list: (options) => this.listSkills(options),
+      get: (id, options) => this.getSkill(id, options),
       create: (req) => this.createSkill(req),
-      update: (id, req) => this.updateSkill(id, req),
+      update: (id, req, options) => this.updateSkill(id, req, options),
       save: (req) => this.saveSkill(req),
       import: (req) => this.importSkill(req),
       delete: (id) => this.deleteSkill(id),
@@ -935,15 +953,22 @@ export class BaoBoxClient {
     };
   }
 
-  private async listSkills(): Promise<Skill[]> {
-    const body = await this.requestAdmin<RawSkill[]>("GET", "/api/v1/skills");
+  private async listSkills(options?: SkillScopeOptions): Promise<Skill[]> {
+    const body = await this.requestAdmin<RawSkill[]>(
+      "GET",
+      "/api/v1/skills",
+      undefined,
+      tenantScopeHeaders(options),
+    );
     return body.data.map(mapSkill);
   }
 
-  private async getSkill(skillId: string): Promise<SkillWithFiles> {
+  private async getSkill(skillId: string, options?: SkillScopeOptions): Promise<SkillWithFiles> {
     const body = await this.requestAdmin<RawSkillWithFiles>(
       "GET",
       `/api/v1/skills/${encodeURIComponent(skillId)}`,
+      undefined,
+      tenantScopeHeaders(options),
     );
     return mapSkillWithFiles(body.data);
   }
@@ -959,7 +984,11 @@ export class BaoBoxClient {
     return skill;
   }
 
-  private async updateSkill(skillId: string, req: SkillUpdateRequest): Promise<Skill> {
+  private async updateSkill(
+    skillId: string,
+    req: SkillUpdateRequest,
+    options?: SkillScopeOptions,
+  ): Promise<Skill> {
     const writeBody = buildSkillWriteBody(req);
     const hasFieldUpdates = Object.keys(writeBody).length > 0;
 
@@ -970,11 +999,18 @@ export class BaoBoxClient {
               "PUT",
               `/api/v1/skills/${encodeURIComponent(skillId)}`,
               writeBody,
+              tenantScopeHeaders(options),
             )
           ).data,
         )
-      : skillWithoutFiles(await this.getSkill(skillId));
+      : skillWithoutFiles(await this.getSkill(skillId, options));
 
+    // #247 scopes skill list/get/update only. Tool attach/detach routes are
+    // explicitly Phase 2 and are not tenant-scoped server-side yet, so the
+    // tool reconciliation deliberately runs unscoped — passing the header here
+    // would be a no-op. The Skill Studio contract's update payload carries no
+    // `tools`, so the BFF never reaches this branch. Scope it alongside the
+    // Phase-2 tool-route work.
     if (req.tools) await this.syncSkillTools(skillId, req.tools);
     return skill;
   }
@@ -1477,8 +1513,9 @@ export class BaoBoxClient {
     method: HttpMethod,
     path: string,
     body?: unknown,
+    extraHeaders?: Record<string, string>,
   ): Promise<ApiEnvelope<T>> {
-    return this.request<T>(method, path, "adminSecret", body);
+    return this.request<T>(method, path, "adminSecret", body, extraHeaders);
   }
 
   private async request<T>(
@@ -1486,12 +1523,14 @@ export class BaoBoxClient {
     path: string,
     authMode: AuthMode,
     body?: unknown,
+    extraHeaders?: Record<string, string>,
   ): Promise<ApiEnvelope<T>> {
     const url = `${this.endpoint}${path}`;
     const controller = new AbortController();
     const headers = {
       ...this.getAuthHeaders(authMode),
       ...(body !== undefined ? { "content-type": "application/json" } : {}),
+      ...(extraHeaders ?? {}),
     };
     const timer =
       this.timeoutMs > 0
@@ -1865,6 +1904,14 @@ function compactObject<T extends Record<string, unknown>>(obj: T): T {
   return Object.fromEntries(
     Object.entries(obj).filter(([, value]) => value !== undefined),
   ) as T;
+}
+
+// #247 — translate an optional tenant scope into the `X-BaoBox-Tenant-Id`
+// request header the worker reads on the admin skills routes. Returns undefined
+// when no scope is set, so the unscoped (cross-tenant) request is unchanged.
+function tenantScopeHeaders(options?: SkillScopeOptions): Record<string, string> | undefined {
+  if (options?.tenantId === undefined) return undefined;
+  return { "X-BaoBox-Tenant-Id": options.tenantId };
 }
 
 function toJsonObject(input: unknown): JsonObject {

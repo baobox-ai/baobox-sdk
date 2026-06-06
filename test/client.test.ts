@@ -2078,3 +2078,96 @@ describe("legacy parse-strategy piping (round-trip)", () => {
     expect(attachments[0]?.parse_strategy).toBe("llamaparse");
   });
 });
+
+describe("skills tenant scope (#247)", () => {
+  const rawSkill = {
+    id: "sk_1",
+    name: "Chaser",
+    description: "desc",
+    systemPrompt: "prompt",
+    model: "MiniMax-M2.7",
+    temperature: 0.2,
+    maxTokens: 4096,
+    sourceUrl: null,
+    tenantId: "t_acme",
+    createdAt: "2026-04-23T00:00:00Z",
+    updatedAt: "2026-04-23T00:00:00Z",
+  };
+
+  function headerOf(init: RequestInit, name: string): string | undefined {
+    return (init.headers as Record<string, string>)[name];
+  }
+
+  it("skills.list({ tenantId }) sends X-BaoBox-Tenant-Id", async () => {
+    const seen: { url?: string; tenant?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.tenant = headerOf(init, "X-BaoBox-Tenant-Id");
+      return jsonResponse(200, { data: [rawSkill], metadata: { requestId: "r", latencyMs: 1 } });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", adminSecret: "s", fetch });
+
+    await bb.skills.list({ tenantId: "t_acme" });
+    expect(seen.url).toBe("https://api.example.com/api/v1/skills");
+    expect(seen.tenant).toBe("t_acme");
+  });
+
+  it("skills.list() omits the scope header (cross-tenant default)", async () => {
+    let tenant: string | undefined = "unset";
+    const fetch = fakeFetch((_url, init) => {
+      tenant = headerOf(init, "X-BaoBox-Tenant-Id");
+      return jsonResponse(200, { data: [rawSkill], metadata: { requestId: "r", latencyMs: 1 } });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", adminSecret: "s", fetch });
+
+    await bb.skills.list();
+    expect(tenant).toBeUndefined();
+  });
+
+  it("skills.get(id, { tenantId }) sends the scope header on the right URL", async () => {
+    const seen: { url?: string; tenant?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.tenant = headerOf(init, "X-BaoBox-Tenant-Id");
+      return jsonResponse(200, {
+        data: { ...rawSkill, files: [] },
+        metadata: { requestId: "r", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", adminSecret: "s", fetch });
+
+    await bb.skills.get("sk_1", { tenantId: "t_acme" });
+    expect(seen.url).toBe("https://api.example.com/api/v1/skills/sk_1");
+    expect(seen.tenant).toBe("t_acme");
+  });
+
+  it("skills.update(id, req, { tenantId }) sends the scope header on the PUT", async () => {
+    const seen: { url?: string; method?: string; tenant?: string; body?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      seen.tenant = headerOf(init, "X-BaoBox-Tenant-Id");
+      seen.body = init.body as string;
+      return jsonResponse(200, { data: rawSkill, metadata: { requestId: "r", latencyMs: 1 } });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", adminSecret: "s", fetch });
+
+    await bb.skills.update("sk_1", { description: "edited" }, { tenantId: "t_acme" });
+    expect(seen.url).toBe("https://api.example.com/api/v1/skills/sk_1");
+    expect(seen.method).toBe("PUT");
+    expect(seen.tenant).toBe("t_acme");
+    expect(JSON.parse(seen.body ?? "{}").description).toBe("edited");
+  });
+
+  it("skills.update without options omits the scope header", async () => {
+    let tenant: string | undefined = "unset";
+    const fetch = fakeFetch((_url, init) => {
+      tenant = headerOf(init, "X-BaoBox-Tenant-Id");
+      return jsonResponse(200, { data: rawSkill, metadata: { requestId: "r", latencyMs: 1 } });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", adminSecret: "s", fetch });
+
+    await bb.skills.update("sk_1", { description: "edited" });
+    expect(tenant).toBeUndefined();
+  });
+});
