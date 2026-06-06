@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.14.0
+
+Tenant-scoped admin skill reads/writes (#247) — the Skill Studio BFF enabler.
+
+### Added
+
+- `SkillScopeOptions` and an optional trailing `options?: { tenantId }` on
+  `client.skills.list`, `client.skills.get`, and `client.skills.update`. When
+  supplied the SDK sends the `X-BaoBox-Tenant-Id` header so an admin-secret
+  client can act on behalf of exactly one tenant: `list` returns that tenant's
+  skills plus global system skills, and `get` / `update` return 404 (not 403)
+  for a skill owned by another tenant. Mirrors `sessions.create({ tenantId })`
+  (0.13.0). Omitting it preserves the cross-tenant (global) behaviour, so this
+  is fully backward compatible.
+- Unit tests asserting the scope header is sent on list/get/update when
+  supplied and omitted when not.
+
+> Requires a BaoBox server with the #247 worker support (it reads
+> `X-BaoBox-Tenant-Id` on the admin skills routes). Against an older server the
+> header is ignored and the call behaves as unscoped — no breakage.
+
 ## 0.13.0
 
 Multi-tenant session creation (#239).

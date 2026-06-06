@@ -425,6 +425,18 @@ export type SkillCreateRequest = {
 
 export type SkillUpdateRequest = Partial<SkillCreateRequest>;
 
+/**
+ * Optional tenant scope for admin skill reads/writes (#247). An admin-secret
+ * client is cross-tenant by default; pass `tenantId` to act on behalf of a
+ * single tenant — `skills.list` then returns that tenant's skills plus global
+ * system skills, and `skills.get` / `skills.update` return 404 (not 403) for a
+ * skill owned by another tenant. Mirrors `sessions.create({ tenantId })`.
+ * Omitting it preserves the cross-tenant (global) behaviour.
+ */
+export type SkillScopeOptions = {
+  tenantId?: string;
+};
+
 export type SkillUpsertRequest = SkillCreateRequest & {
   id?: string;
 };

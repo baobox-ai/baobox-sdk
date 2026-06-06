@@ -162,6 +162,26 @@ field for cross-tenant dispatch (`tools.invoke()`, `workflow()`,
 always remain scoped to the tenant their key is bound to and cannot
 override it.
 
+The admin skill reads/writes also accept an optional tenant scope
+(`skills.list`, `skills.get`, `skills.update`), mirroring
+`sessions.create({ tenantId })`:
+
+```typescript
+// Cross-tenant (default): every skill.
+await bb.skills.list();
+
+// Scoped: this tenant's skills + global system skills.
+await bb.skills.list({ tenantId: "t_acme" });
+
+// 404 (not 403) if sk_x is owned by another tenant; global skills stay visible.
+await bb.skills.get("sk_x", { tenantId: "t_acme" });
+await bb.skills.update("sk_x", { description: "edited" }, { tenantId: "t_acme" });
+```
+
+The SDK sends the scope as the `X-BaoBox-Tenant-Id` header. This is what the
+Skill Studio BFF (`@baobox/skill-builder-bff`) uses to act on behalf of exactly
+one tenant. Requires a server with the #247 worker support.
+
 ## API surface
 
 ### Chat
