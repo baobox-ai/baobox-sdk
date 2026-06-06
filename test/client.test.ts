@@ -224,6 +224,82 @@ describe("admin auth surfaces", () => {
     expect(skills[0]?.sourceUrl).toBeNull();
   });
 
+  // #254 — an apiKey-only client (the Skill Studio BFF, scoped to one tenant)
+  // authenticates skills.list/get/update with the apiKey and still sends the
+  // tenant scope header.
+  it("uses apiKey for skills.list when no adminSecret, and sends the tenant header", async () => {
+    const seen: { url?: string; auth?: string; tenant?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      const headers = init.headers as Record<string, string>;
+      seen.auth = headers.authorization;
+      seen.tenant = headers["X-BaoBox-Tenant-Id"];
+      return jsonResponse(200, { data: [], metadata: { requestId: "r", latencyMs: 1 } });
+    });
+
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "skb_tenant_key",
+      fetch,
+    });
+
+    await bb.skills.list({ tenantId: "t_a" });
+    expect(seen.url).toBe("https://api.example.com/api/v1/skills");
+    expect(seen.auth).toBe("Bearer skb_tenant_key");
+    expect(seen.tenant).toBe("t_a");
+  });
+
+  it("prefers adminSecret over apiKey for skills.update when both are present", async () => {
+    let seenAuth = "";
+    const fetch = fakeFetch((_url, init) => {
+      seenAuth = (init.headers as Record<string, string>).authorization ?? "";
+      return jsonResponse(200, {
+        data: {
+          id: "sk_1",
+          name: "n",
+          description: "d",
+          systemPrompt: "p",
+          model: "MiniMax-M2.7",
+          temperature: 0.2,
+          maxTokens: 4096,
+          sourceUrl: null,
+          tenantId: "t_a",
+          createdAt: "2026-04-23T00:00:00Z",
+          updatedAt: "2026-04-23T00:00:00Z",
+        },
+        metadata: { requestId: "r", latencyMs: 1 },
+      });
+    });
+
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "skb_key",
+      adminSecret: "adm-secret",
+      fetch,
+    });
+
+    await bb.skills.update("sk_1", { description: "x" }, { tenantId: "t_a" });
+    expect(seenAuth).toBe("Bearer adm-secret");
+  });
+
+  it("skills.update rejects `tools` on an apiKey-only client before any write", async () => {
+    let called = false;
+    const fetch = fakeFetch(() => {
+      called = true;
+      return jsonResponse(200, { data: {}, metadata: { requestId: "r", latencyMs: 1 } });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "skb_key",
+      fetch,
+    });
+    await expect(
+      bb.skills.update("sk_1", { description: "x", tools: [] }, { tenantId: "t_a" }),
+    ).rejects.toThrow(/tools requires adminSecret/);
+    // No HTTP call was made — the guard runs before the field PUT.
+    expect(called).toBe(false);
+  });
+
   it("events.list hits session timeline and unwraps the nested response", async () => {
     let seenUrl = "";
     const fetch = fakeFetch((url) => {
