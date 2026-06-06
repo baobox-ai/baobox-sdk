@@ -872,10 +872,14 @@ export class BaoBoxClient {
   }
 
   private async createSession(req: SessionCreateRequest = {}): Promise<Session> {
+    // #239 — forward `tenantId` so multi-tenant consumers get a tenant-scoped
+    // session instead of having to bypass the SDK with a raw fetch. The server
+    // reads it from the body (and echoes it back on `RawSession.tenantId`).
+    // compactObject drops it when undefined, preserving the unscoped default.
     const body = await this.requestAdmin<RawSession>(
       "POST",
       "/api/v1/sessions",
-      compactObject({ skillId: req.skillId }),
+      compactObject({ skillId: req.skillId, tenantId: req.tenantId }),
     );
     return mapSession(body.data);
   }
