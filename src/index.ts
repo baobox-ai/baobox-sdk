@@ -954,7 +954,7 @@ export class BaoBoxClient {
   }
 
   private async listSkills(options?: SkillScopeOptions): Promise<Skill[]> {
-    const body = await this.requestAdmin<RawSkill[]>(
+    const body = await this.requestSkills<RawSkill[]>(
       "GET",
       "/api/v1/skills",
       undefined,
@@ -964,7 +964,7 @@ export class BaoBoxClient {
   }
 
   private async getSkill(skillId: string, options?: SkillScopeOptions): Promise<SkillWithFiles> {
-    const body = await this.requestAdmin<RawSkillWithFiles>(
+    const body = await this.requestSkills<RawSkillWithFiles>(
       "GET",
       `/api/v1/skills/${encodeURIComponent(skillId)}`,
       undefined,
@@ -989,13 +989,21 @@ export class BaoBoxClient {
     req: SkillUpdateRequest,
     options?: SkillScopeOptions,
   ): Promise<Skill> {
+    // #254 — tool attach/detach is admin-only (`syncSkillTools` uses the admin
+    // secret). Reject `tools` up front for an apiKey-only client so we never
+    // do the field PUT and THEN throw on tools, leaving a partial mutation.
+    if (req.tools && !this.adminSecret) {
+      throw new Error(
+        "BaoBoxClient: updating skill tools requires adminSecret; an apiKey client cannot manage tools",
+      );
+    }
     const writeBody = buildSkillWriteBody(req);
     const hasFieldUpdates = Object.keys(writeBody).length > 0;
 
     const skill = hasFieldUpdates
       ? mapSkill(
           (
-            await this.requestAdmin<RawSkill>(
+            await this.requestSkills<RawSkill>(
               "PUT",
               `/api/v1/skills/${encodeURIComponent(skillId)}`,
               writeBody,
@@ -1516,6 +1524,22 @@ export class BaoBoxClient {
     extraHeaders?: Record<string, string>,
   ): Promise<ApiEnvelope<T>> {
     return this.request<T>(method, path, "adminSecret", body, extraHeaders);
+  }
+
+  // #254 — the admin skill surface (`skills.list/get/update`) accepts EITHER
+  // the cross-tenant adminSecret OR a tenant-bound API key with skills:read /
+  // skills:write (server-side: `skillsAuth`). Prefer the adminSecret when the
+  // client has one (existing admin-tooling behaviour); otherwise authenticate
+  // with the apiKey. This lets the Skill Studio BFF construct an apiKey-only
+  // client scoped to a single tenant — no cross-tenant credential in the BFF.
+  private async requestSkills<T>(
+    method: HttpMethod,
+    path: string,
+    body?: unknown,
+    extraHeaders?: Record<string, string>,
+  ): Promise<ApiEnvelope<T>> {
+    const mode: AuthMode = this.adminSecret ? "adminSecret" : "apiKey";
+    return this.request<T>(method, path, mode, body, extraHeaders);
   }
 
   private async request<T>(

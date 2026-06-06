@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.15.0
+
+Per-tenant credential for the admin skill surface (#254 AC1).
+
+### Added
+
+- `client.skills.list`, `client.skills.get`, and `client.skills.update` now
+  authenticate with an **`apiKey`** when the client has no `adminSecret`
+  (previously these were `adminSecret`-only). This lets the Skill Studio BFF
+  construct an `apiKey`-only client scoped to a single tenant, instead of
+  holding the cross-tenant `adminSecret`. When both `apiKey` and `adminSecret`
+  are present the `adminSecret` is preferred, so existing admin tooling is
+  unchanged. The `X-BaoBox-Tenant-Id` scope header is still sent in both modes.
+- Unit tests asserting the apiKey is used (and the tenant header sent) for an
+  apiKey-only client, and that adminSecret wins when both are supplied.
+
+> Requires a BaoBox server with #254 worker support: a tenant-bound API key
+> carrying `skills:read` / `skills:write` authorized for the skill routes.
+> Backward compatible — adminSecret clients behave exactly as in 0.14.0.
+
 ## 0.14.0
 
 Tenant-scoped admin skill reads/writes (#247) — the Skill Studio BFF enabler.
