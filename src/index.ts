@@ -12,6 +12,7 @@ import type {
   AttachmentInputInline,
   AttachmentInputUrl,
   ParseStrategy,
+  AttachSkillResult,
   AttachToolResult,
   BaoBoxClientOptions,
   CallerPushedEventType,
@@ -24,6 +25,7 @@ import type {
   CreateEvalCaseRequest,
   CreateScheduledTaskRequest,
   DeleteResult,
+  DetachSkillResult,
   DetachToolResult,
   EvalCase,
   EvalCompare,
@@ -447,7 +449,13 @@ export class BaoBoxClient {
      * owned by another tenant returns 404 (#247); global skills stay visible.
      */
     get: (skillId: string, options?: SkillScopeOptions) => Promise<SkillWithFiles>;
-    create: (req: SkillCreateRequest) => Promise<Skill>;
+    /**
+     * Create a skill. Pass `{ tenantId }` (or use an apiKey client) to create a
+     * TENANT-OWNED skill (#257); an unscoped adminSecret client creates a global
+     * skill. An apiKey client must NOT pass `tools` — attach tools separately via
+     * `skills.attachTool` (the per-key tool allowlist applies).
+     */
+    create: (req: SkillCreateRequest, options?: SkillScopeOptions) => Promise<Skill>;
     /**
      * Update a skill. Pass `{ tenantId }` to scope the write — updating a skill
      * owned by another tenant returns 404 (#247); global skills stay writable.
@@ -458,6 +466,36 @@ export class BaoBoxClient {
       options?: SkillScopeOptions,
     ) => Promise<Skill>;
     save: (req: SkillUpsertRequest) => Promise<Skill>;
+    /**
+     * #257 — orchestrator graph + tool authoring over a per-tenant apiKey (or
+     * adminSecret). All are tenant-scoped via `{ tenantId }`; on an apiKey client
+     * the key's tenant is implicit. The parent skill must be tenant-owned;
+     * `attachTool` additionally requires the tool on the key's allowlist.
+     */
+    attachSkill: (
+      parentSkillId: string,
+      childSkillId: string,
+      options?: SkillScopeOptions,
+    ) => Promise<AttachSkillResult>;
+    detachSkill: (
+      parentSkillId: string,
+      childSkillId: string,
+      options?: SkillScopeOptions,
+    ) => Promise<DetachSkillResult>;
+    /** List a skill's attached sub-skills (orchestrator graph), tenant-scoped. */
+    listAttachedSkills: (skillId: string, options?: SkillScopeOptions) => Promise<Skill[]>;
+    attachTool: (
+      skillId: string,
+      toolId: string,
+      options?: SkillScopeOptions,
+    ) => Promise<AttachToolResult>;
+    detachTool: (
+      skillId: string,
+      toolId: string,
+      options?: SkillScopeOptions,
+    ) => Promise<DetachToolResult>;
+    /** List the tools attached to a skill, tenant-scoped. */
+    listTools: (skillId: string, options?: SkillScopeOptions) => Promise<Tool[]>;
     import: (req: SkillImportRequest) => Promise<Skill>;
     delete: (skillId: string) => Promise<DeleteResult>;
     /**
@@ -604,11 +642,19 @@ export class BaoBoxClient {
     this.skills = {
       list: (options) => this.listSkills(options),
       get: (id, options) => this.getSkill(id, options),
-      create: (req) => this.createSkill(req),
+      create: (req, options) => this.createSkill(req, options),
       update: (id, req, options) => this.updateSkill(id, req, options),
       save: (req) => this.saveSkill(req),
       import: (req) => this.importSkill(req),
       delete: (id) => this.deleteSkill(id),
+      attachSkill: (parentId, childId, options) =>
+        this.attachSubSkillScoped(parentId, childId, options),
+      detachSkill: (parentId, childId, options) =>
+        this.detachSubSkillScoped(parentId, childId, options),
+      listAttachedSkills: (id, options) => this.listAttachedSkillsScoped(id, options),
+      attachTool: (skillId, toolId, options) => this.attachSkillToolScoped(skillId, toolId, options),
+      detachTool: (skillId, toolId, options) => this.detachSkillToolScoped(skillId, toolId, options),
+      listTools: (id, options) => this.listSkillToolsScoped(id, options),
       updateGuardrails: (id, req) => this.updateSkillGuardrails(id, req),
       files: {
         list: (id) => this.listSkillFiles(id),
@@ -973,15 +1019,111 @@ export class BaoBoxClient {
     return mapSkillWithFiles(body.data);
   }
 
-  private async createSkill(req: SkillCreateRequest): Promise<Skill> {
-    const body = await this.requestAdmin<RawSkill>(
+  private async createSkill(req: SkillCreateRequest, options?: SkillScopeOptions): Promise<Skill> {
+    // #257 — the `tools` convenience field reconciles via the admin-only tool
+    // routes (syncSkillTools). Reject it up front for an apiKey-only client so we
+    // never create the skill and THEN fail on tools, leaving a half-built skill.
+    // An apiKey client attaches tools explicitly via `skills.attachTool`.
+    if (req.tools && !this.adminSecret) {
+      throw new Error(
+        "BaoBoxClient: creating a skill with `tools` requires adminSecret; on an apiKey client attach tools via skills.attachTool",
+      );
+    }
+    // #257 — use the dual-auth skills path (adminSecret OR apiKey). With an
+    // apiKey, the worker forces tenant ownership; with adminSecret, `tenantId`
+    // (if given) scopes it, else it is global. Phase-1 behaviour preserved.
+    const body = await this.requestSkills<RawSkill>(
       "POST",
       "/api/v1/skills",
       buildSkillWriteBody(req),
+      tenantScopeHeaders(options),
     );
     const skill = mapSkill(body.data);
     if (req.tools) await this.syncSkillTools(skill.id, req.tools);
     return skill;
+  }
+
+  // #257 — orchestrator graph + tool authoring over the dual-auth skills path
+  // (`requestSkills`: adminSecret OR per-tenant apiKey). These hit the new
+  // `/api/v1/skills/:id/{attached-skills,tools}/*` routes (#257 worker) which are
+  // covered by `skillsAuth`, so an apiKey client can author within its tenant.
+  private async attachSubSkillScoped(
+    parentSkillId: string,
+    childSkillId: string,
+    options?: SkillScopeOptions,
+  ): Promise<AttachSkillResult> {
+    const body = await this.requestSkills<AttachSkillResult>(
+      "POST",
+      `/api/v1/skills/${encodeURIComponent(parentSkillId)}/attached-skills/${encodeURIComponent(childSkillId)}`,
+      undefined,
+      tenantScopeHeaders(options),
+    );
+    return body.data;
+  }
+
+  private async detachSubSkillScoped(
+    parentSkillId: string,
+    childSkillId: string,
+    options?: SkillScopeOptions,
+  ): Promise<DetachSkillResult> {
+    const body = await this.requestSkills<DetachSkillResult>(
+      "DELETE",
+      `/api/v1/skills/${encodeURIComponent(parentSkillId)}/attached-skills/${encodeURIComponent(childSkillId)}`,
+      undefined,
+      tenantScopeHeaders(options),
+    );
+    return body.data;
+  }
+
+  private async listAttachedSkillsScoped(
+    skillId: string,
+    options?: SkillScopeOptions,
+  ): Promise<Skill[]> {
+    const body = await this.requestSkills<RawSkill[]>(
+      "GET",
+      `/api/v1/skills/${encodeURIComponent(skillId)}/attached-skills`,
+      undefined,
+      tenantScopeHeaders(options),
+    );
+    return body.data.map(mapSkill);
+  }
+
+  private async attachSkillToolScoped(
+    skillId: string,
+    toolId: string,
+    options?: SkillScopeOptions,
+  ): Promise<AttachToolResult> {
+    const body = await this.requestSkills<AttachToolResult>(
+      "POST",
+      `/api/v1/skills/${encodeURIComponent(skillId)}/tools/${encodeURIComponent(toolId)}`,
+      undefined,
+      tenantScopeHeaders(options),
+    );
+    return body.data;
+  }
+
+  private async detachSkillToolScoped(
+    skillId: string,
+    toolId: string,
+    options?: SkillScopeOptions,
+  ): Promise<DetachToolResult> {
+    const body = await this.requestSkills<DetachToolResult>(
+      "DELETE",
+      `/api/v1/skills/${encodeURIComponent(skillId)}/tools/${encodeURIComponent(toolId)}`,
+      undefined,
+      tenantScopeHeaders(options),
+    );
+    return body.data;
+  }
+
+  private async listSkillToolsScoped(skillId: string, options?: SkillScopeOptions): Promise<Tool[]> {
+    const body = await this.requestSkills<RawTool[]>(
+      "GET",
+      `/api/v1/skills/${encodeURIComponent(skillId)}/tools`,
+      undefined,
+      tenantScopeHeaders(options),
+    );
+    return body.data.map(mapTool);
   }
 
   private async updateSkill(

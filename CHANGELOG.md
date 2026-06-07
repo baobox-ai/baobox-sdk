@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.16.0
+
+Tenant-scoped skill **authoring** over the per-tenant `apiKey` (#257, Skill
+Studio Phase 2).
+
+### Added
+
+- `client.skills.create(req, { tenantId })` now uses the dual-auth skills path
+  (adminSecret **or** apiKey). With an apiKey the new skill is **tenant-owned**;
+  an unscoped adminSecret client still creates a global skill (unchanged).
+- `client.skills.attachSkill` / `detachSkill` / `listAttachedSkills` — the
+  orchestrator sub-skill graph.
+- `client.skills.attachTool` / `detachTool` / `listTools` — tool wiring against
+  the new `/api/v1/skills/:id/tools/*` routes. This **lifts the "tools require
+  adminSecret" restriction**: an apiKey client may attach tools on its key's
+  allowlist (server-enforced; off-list → 403, cross-tenant tool → 403).
+- All new methods accept `{ tenantId }`; on an apiKey client the key's tenant is
+  implicit and the server forces ownership.
+
+### Notes
+
+- `skills.create` on an **apiKey** client rejects a `tools` field up front (use
+  `skills.attachTool`) so a create can never half-succeed.
+- Requires a BaoBox server with #257 worker support (tenant key grants
+  `skills:create` / `skills:attach` / `skills:tools` + a `tool:<id>` allowlist).
+
 ## 0.15.0
 
 Per-tenant credential for the admin skill surface (#254 AC1).
