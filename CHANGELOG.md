@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.17.0
+
+Additive model-config surface — `reasoningEffort` on skills (#301).
+
+### Added
+
+- `ReasoningEffort` type: `"none" | "minimal" | "low" | "medium" | "high" |
+  "xhigh"`. Exported from the package root. These are the OpenAI-API
+  reasoning-effort tiers; **which values a given model accepts is
+  model-dependent** (`"minimal"` → some gpt-5/mini/nano variants; `"none"` /
+  `"xhigh"` → newer gpt-5.x variants that drop `"minimal"`). The SDK exposes
+  the full set; per-model validity is enforced server-side.
+- `SkillCreateRequest.reasoningEffort?: ReasoningEffort` — optionally set the
+  reasoning effort when creating or updating a skill. `compactObject` drops it
+  when `undefined`, so existing callers that don't pass it see no wire change.
+- `SkillUpdateRequest` inherits the field via `Partial<SkillCreateRequest>`.
+- `Skill.reasoningEffort?: ReasoningEffort | null` — read back on skill
+  responses. Optional so pre-#301 server responses (which omit the field)
+  remain compatible.
+
+### Notes
+
+**ADDITIVE-ONLY** — no existing fields renamed or removed. Wire shape is
+unchanged for callers that do not pass `reasoningEffort`.
+
+**Author-vs-read-only decision**: `reasoningEffort` is the only new field
+surfaced as author-able in this release. Per-role model config (e.g. a
+dedicated model for the preflight guard vs the main turn) and fallback model
+chains are server/portal-side concerns — the platform manages them without SDK
+input. The SDK exposes those fields as read-only mirrors only once the server
+contract stabilises; that work is tracked as a follow-on to #301.
+
+> Requires a server with #301 support to persist `reasoningEffort`. Against
+> an older server the field is forwarded on write (harmlessly ignored) and
+> absent on reads — no breakage.
+
 ## 0.16.0
 
 Tenant-scoped skill **authoring** over the per-tenant `apiKey` (#257, Skill
