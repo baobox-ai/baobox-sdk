@@ -407,6 +407,17 @@ export type SkillFileInput = {
   content: string;
 };
 
+/**
+ * Controls how much reasoning compute the model applies before generating a
+ * response. `"minimal"` is the lightest tier (fastest / lowest cost);
+ * `"high"` is the most thorough. Omit to use the server-side default.
+ *
+ * Note: per-role model config and fallback model chains are server/portal-
+ * side concerns and are not authored through the SDK in this release. That
+ * surface is tracked as a follow-on (#301).
+ */
+export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+
 export type SkillCreateRequest = {
   name: string;
   description?: string;
@@ -414,6 +425,11 @@ export type SkillCreateRequest = {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  /**
+   * How much reasoning compute to apply. Optional — omit to use the
+   * server-side default. See `ReasoningEffort` for the four tiers.
+   */
+  reasoningEffort?: ReasoningEffort;
   sourceUrl?: string;
   files?: SkillFileInput[];
   /**
@@ -449,6 +465,11 @@ export type Skill = {
   model: string;
   temperature: number;
   maxTokens: number;
+  /**
+   * Reasoning effort configured on this skill. Optional — absent when the
+   * server has no explicit value set (uses its built-in default).
+   */
+  reasoningEffort?: ReasoningEffort | null;
   sourceUrl: string | null;
   tenantId: string | null;
   createdAt: string;

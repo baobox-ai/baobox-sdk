@@ -5,6 +5,7 @@ import type {
   AdminSkillGuardrailUpdateRequest,
   AdminSkillGuardrailUpdateResult,
   ApiKey,
+  ReasoningEffort,
   AppendedRunEvent,
   AppendRunEventRequest,
   AttachmentInput,
@@ -167,6 +168,9 @@ type RawSkill = {
   model: string;
   temperature: number;
   maxTokens: number;
+  // 0.17.0 — reasoning effort tier. Optional: servers that predate #301
+  // support omit this field; the mapper passes it through as-is.
+  reasoningEffort?: ReasoningEffort | null;
   sourceUrl: string | null;
   tenantId: string | null;
   // η.1 / B-3 — per-skill attachment policy. Optional on the SDK side so a
@@ -1856,6 +1860,9 @@ function mapSkill(raw: RawSkill): Skill {
     model: raw.model,
     temperature: raw.temperature,
     maxTokens: raw.maxTokens,
+    // 0.17.0 — pass through when present; omit when the server doesn't send it
+    // so consumers on older servers still get a well-typed Skill object.
+    ...("reasoningEffort" in raw ? { reasoningEffort: raw.reasoningEffort } : {}),
     sourceUrl: raw.sourceUrl,
     tenantId: raw.tenantId,
     createdAt: raw.createdAt,
@@ -2037,6 +2044,7 @@ function mapEvalRunResult(raw: RawEvalRunResult): EvalRunResult {
 function buildSkillWriteBody(req: SkillCreateRequest | SkillUpdateRequest): Record<string, unknown> {
   // 0.8.0: BaoBox admin surface accepts camelCase request bodies after the
   // ι epic. The previous snake_case keys are no longer recognized.
+  // 0.17.0: reasoningEffort forwarded when set; compactObject drops undefined.
   return compactObject({
     name: req.name,
     description: req.description,
@@ -2044,6 +2052,7 @@ function buildSkillWriteBody(req: SkillCreateRequest | SkillUpdateRequest): Reco
     model: req.model,
     temperature: req.temperature,
     maxTokens: req.maxTokens,
+    reasoningEffort: req.reasoningEffort,
     sourceUrl: req.sourceUrl,
     files: req.files,
   });

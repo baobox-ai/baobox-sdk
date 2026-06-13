@@ -2358,3 +2358,104 @@ describe("skills tenant scope (#247)", () => {
     expect(tenant).toBeUndefined();
   });
 });
+
+// #301 — reasoningEffort on skill create/update/read
+describe("skill reasoningEffort (#301)", () => {
+  const rawSkillBase = {
+    skillId: "sk_re",
+    name: "ReasoningSkill",
+    description: "desc",
+    systemPrompt: "prompt",
+    model: "model-x",
+    temperature: 0.5,
+    maxTokens: 2048,
+    sourceUrl: null,
+    tenantId: null,
+    createdAt: "2026-06-13T00:00:00Z",
+    updatedAt: "2026-06-13T00:00:00Z",
+  };
+
+  it("skills.create sends reasoningEffort on the wire when supplied", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(init.body as string) as Record<string, unknown>;
+      return jsonResponse(201, {
+        data: { ...rawSkillBase, reasoningEffort: "high" },
+        metadata: { requestId: "r_re1", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const skill = await bb.skills.create({
+      name: "ReasoningSkill",
+      systemPrompt: "prompt",
+      reasoningEffort: "high",
+    });
+
+    expect(seenBody.reasoningEffort).toBe("high");
+    expect(skill.reasoningEffort).toBe("high");
+  });
+
+  it("skills.create omits reasoningEffort from the wire when not supplied", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(init.body as string) as Record<string, unknown>;
+      return jsonResponse(201, {
+        data: rawSkillBase,
+        metadata: { requestId: "r_re2", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const skill = await bb.skills.create({ name: "ReasoningSkill", systemPrompt: "prompt" });
+
+    expect("reasoningEffort" in seenBody).toBe(false);
+    expect("reasoningEffort" in skill).toBe(false);
+  });
+
+  it("skills.update sends reasoningEffort on the wire when supplied", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(init.body as string) as Record<string, unknown>;
+      return jsonResponse(200, {
+        data: { ...rawSkillBase, reasoningEffort: "medium" },
+        metadata: { requestId: "r_re3", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const skill = await bb.skills.update("sk_re", { reasoningEffort: "medium" });
+
+    expect(seenBody.reasoningEffort).toBe("medium");
+    expect(skill.reasoningEffort).toBe("medium");
+  });
+
+  it("Skill.reasoningEffort is absent when the server omits it (pre-#301 compat)", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: [rawSkillBase],
+        metadata: { requestId: "r_re4", latencyMs: 1 },
+      }),
+    );
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const [skill] = await bb.skills.list();
+    expect("reasoningEffort" in (skill ?? {})).toBe(false);
+  });
+});
