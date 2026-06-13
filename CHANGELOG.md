@@ -6,9 +6,12 @@ Additive model-config surface — `reasoningEffort` on skills (#301).
 
 ### Added
 
-- `ReasoningEffort` type: `"minimal" | "low" | "medium" | "high"`. Exported
-  from the package root. `"minimal"` is the lightest tier (fastest / lowest
-  cost); `"high"` is the most thorough.
+- `ReasoningEffort` type: `"none" | "minimal" | "low" | "medium" | "high" |
+  "xhigh"`. Exported from the package root. These are the OpenAI-API
+  reasoning-effort tiers; **which values a given model accepts is
+  model-dependent** (`"minimal"` → some gpt-5/mini/nano variants; `"none"` /
+  `"xhigh"` → newer gpt-5.x variants that drop `"minimal"`). The SDK exposes
+  the full set; per-model validity is enforced server-side.
 - `SkillCreateRequest.reasoningEffort?: ReasoningEffort` — optionally set the
   reasoning effort when creating or updating a skill. `compactObject` drops it
   when `undefined`, so existing callers that don't pass it see no wire change.

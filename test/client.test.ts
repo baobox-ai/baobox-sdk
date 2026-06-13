@@ -2458,4 +2458,50 @@ describe("skill reasoningEffort (#301)", () => {
     const [skill] = await bb.skills.list();
     expect("reasoningEffort" in (skill ?? {})).toBe(false);
   });
+
+  it("skills.create sends reasoningEffort 'none' on the wire (xhigh-tier model compat)", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(init.body as string) as Record<string, unknown>;
+      return jsonResponse(201, {
+        data: { ...rawSkillBase, reasoningEffort: "none" },
+        metadata: { requestId: "r_re5", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const skill = await bb.skills.create({
+      name: "ReasoningSkill",
+      systemPrompt: "prompt",
+      reasoningEffort: "none",
+    });
+
+    expect(seenBody.reasoningEffort).toBe("none");
+    expect(skill.reasoningEffort).toBe("none");
+  });
+
+  it("skills.update sends reasoningEffort 'xhigh' on the wire (xhigh-tier model compat)", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(init.body as string) as Record<string, unknown>;
+      return jsonResponse(200, {
+        data: { ...rawSkillBase, reasoningEffort: "xhigh" },
+        metadata: { requestId: "r_re6", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const skill = await bb.skills.update("sk_re", { reasoningEffort: "xhigh" });
+
+    expect(seenBody.reasoningEffort).toBe("xhigh");
+    expect(skill.reasoningEffort).toBe("xhigh");
+  });
 });
