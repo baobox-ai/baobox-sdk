@@ -5,6 +5,7 @@ import type {
   AdminSkillGuardrailUpdateRequest,
   AdminSkillGuardrailUpdateResult,
   ApiKey,
+  LlmCatalog,
   ReasoningEffort,
   AppendedRunEvent,
   AppendRunEventRequest,
@@ -572,6 +573,22 @@ export class BaoBoxClient {
     appendEvent: (runId: string, req: AppendRunEventRequest) => Promise<AppendedRunEvent>;
   };
   /**
+   * LLM model catalog — non-tenant, static metadata about the providers
+   * and models BaoBox is configured with.
+   *
+   * ADMIN_SECRET-gated: an apiKey-only client will receive 401 (same auth
+   * posture as `/api/v1/tools`). The catalog is read-only from the SDK side.
+   */
+  public readonly catalog: {
+    /**
+     * Fetch all providers and models from `GET /api/v1/llm-providers`.
+     *
+     * ADMIN_SECRET-gated — an apiKey-only client will get 401 (the catalog
+     * is non-tenant, static data; same posture as `/tools`).
+     */
+    list: () => Promise<LlmCatalog>;
+  };
+  /**
    * Builders for the `attachments[]` field on `chat()` / `workflow()`.
    * Pure helpers — they don't touch the network. Re-exported as standalone
    * `attachmentFromUrl` / `attachmentFromInline` / `attachmentFromRef`
@@ -709,6 +726,10 @@ export class BaoBoxClient {
       get: (runId) => this.getRunTimeline(runId),
       list: (req) => this.listRuns(req),
       appendEvent: (runId, req) => this.appendRunEvent(runId, req),
+    };
+
+    this.catalog = {
+      list: () => this.listLlmCatalog(),
     };
 
     this.attachments = {
@@ -1273,6 +1294,11 @@ export class BaoBoxClient {
       "DELETE",
       `/api/v1/skills/${encodeURIComponent(skillId)}/files/${encodePath(path)}`,
     );
+    return body.data;
+  }
+
+  private async listLlmCatalog(): Promise<LlmCatalog> {
+    const body = await this.requestAdmin<LlmCatalog>("GET", "/api/v1/llm-providers");
     return body.data;
   }
 

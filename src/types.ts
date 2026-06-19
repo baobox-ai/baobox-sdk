@@ -859,6 +859,61 @@ export type SseEvent =
   | { event: "heartbeat"; data: Record<string, never> }
   | { event: "error"; data: { code: string; message: string } };
 
+// ─── LLM catalog (0.18.0) ────────────────────────────────────────────────────
+//
+// Read-only mirror of the server's `/api/v1/llm-providers` response.
+// ADMIN_SECRET-gated — an apiKey-only client receives 401 (same posture
+// as `/api/v1/tools`). The catalog is non-tenant, static-ish metadata.
+//
+// Wire shape mirrors ProviderView / ModelInfo from the BaoBox server.
+
+export type LlmCatalogModelPricing = {
+  /** Cost in USD per million input tokens. */
+  inputUsdPerMTok: number;
+  /** Cost in USD per million output tokens. */
+  outputUsdPerMTok: number;
+  /** ISO date the pricing was last recorded (e.g. "2026-06-01"). */
+  asOf: string;
+};
+
+export type LlmCatalogModel = {
+  /** Provider-namespaced model id (e.g. "openai/gpt-5"). */
+  id: string;
+  displayName: string;
+  /** Whether the model exposes sampling or reasoning parameters. */
+  paramProfile: "sampling" | "reasoning";
+  /**
+   * Reasoning effort tiers this model accepts. Present when
+   * `paramProfile === "reasoning"`; absent otherwise.
+   */
+  reasoningEfforts?: string[];
+  /** Maximum context window in tokens, if known. */
+  contextWindow?: number;
+  /** Pricing snapshot, if available. */
+  pricing?: LlmCatalogModelPricing;
+};
+
+export type LlmCatalogProvider = {
+  /** Provider slug used in model ids (e.g. "openai"). */
+  id: string;
+  displayName: string;
+  /** Default model id for this provider as configured in BaoBox. */
+  defaultModel: string;
+  docsUrl: string;
+  pricingUrl: string;
+  models: LlmCatalogModel[];
+};
+
+/**
+ * Returned by `client.catalog.list()`. Contains all providers BaoBox knows
+ * about and the global list of valid reasoning-effort tier strings.
+ */
+export type LlmCatalog = {
+  providers: LlmCatalogProvider[];
+  /** All reasoning-effort tier strings valid across all providers. */
+  reasoningEfforts: string[];
+};
+
 // ─── ChatStreamRequest (0.9.0) ────────────────────────────────────────────────
 
 /** Request shape for `client.chatStream()`. Same fields as `ChatRequest`. */

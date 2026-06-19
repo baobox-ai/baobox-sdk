@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.18.0
+
+Model catalog surface — `client.catalog.list()` (#320 PR-B).
+
+### Added
+
+- `client.catalog.list(): Promise<LlmCatalog>` — fetches `GET /api/v1/llm-providers`
+  and returns the unwrapped `{ providers, reasoningEfforts }` payload. **ADMIN_SECRET-gated**:
+  an apiKey-only client will receive 401 (same posture as `/api/v1/tools`). The catalog
+  is non-tenant, static metadata; no request body is sent.
+- New public types (all exported from the package root):
+  - `LlmCatalog` — top-level return shape: `{ providers: LlmCatalogProvider[], reasoningEfforts: string[] }`.
+  - `LlmCatalogProvider` — `{ id, displayName, defaultModel, docsUrl, pricingUrl, models }`.
+  - `LlmCatalogModel` — `{ id, displayName, paramProfile, reasoningEfforts?, contextWindow?, pricing? }`.
+  - `LlmCatalogModelPricing` — `{ inputUsdPerMTok, outputUsdPerMTok, asOf }`.
+
+### Notes
+
+**ADDITIVE-ONLY** — no existing fields renamed or removed. All prior SDK methods are unchanged.
+
+The Skill Studio BFF can now call `client.catalog.list()` to replace its hand-kept static
+provider list with the live server catalog. Requires a BaoBox server with the
+`GET /api/v1/llm-providers` endpoint merged.
+
 ## 0.17.0
 
 Additive model-config surface — `reasoningEffort` on skills (#301).
