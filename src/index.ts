@@ -6,6 +6,10 @@ import type {
   AdminSkillGuardrailUpdateResult,
   ApiKey,
   LlmCatalog,
+  ModelRole,
+  RoleModelChainEntry,
+  SkillRoleModel,
+  SkillRoleModelsMap,
   ReasoningEffort,
   AppendedRunEvent,
   AppendRunEventRequest,
@@ -520,6 +524,33 @@ export class BaoBoxClient {
       set: (skillId: string, path: string, req: SetSkillFileRequest) => Promise<SetSkillFileResult>;
       delete: (skillId: string, path: string) => Promise<DeleteResult>;
     };
+    /**
+     * Per-role guard model config for a skill. Tenant-scoped; requires an
+     * apiKey with `skills:read` (get) or `skills:write` (put). On an
+     * adminSecret client, pass `{ tenantId }` to scope to a specific tenant.
+     *
+     * Corresponds to:
+     *   `GET /api/v1/skills/:id/role-models`
+     *   `PUT /api/v1/skills/:id/role-models`
+     */
+    roleModels: {
+      /**
+       * Fetch the full role → chain map for a skill.
+       * Requires `skills:read`. Tenant-scoped via `options.tenantId` or the
+       * apiKey's implicit tenant.
+       */
+      get: (skillId: string, options?: SkillScopeOptions) => Promise<SkillRoleModelsMap>;
+      /**
+       * Replace the model chain for a single role on a skill.
+       * Requires `skills:write`. Chain length is capped at 4 server-side.
+       * Tenant-scoped via `options.tenantId` or the apiKey's implicit tenant.
+       */
+      put: (
+        skillId: string,
+        body: { role: ModelRole; chain: RoleModelChainEntry[] },
+        options?: SkillScopeOptions,
+      ) => Promise<{ role: ModelRole; chain: SkillRoleModel[] }>;
+    };
   };
   public readonly tools: {
     list: () => Promise<Tool[]>;
@@ -682,6 +713,10 @@ export class BaoBoxClient {
         get: (id, path) => this.getSkillFile(id, path),
         set: (id, path, req) => this.setSkillFile(id, path, req),
         delete: (id, path) => this.deleteSkillFile(id, path),
+      },
+      roleModels: {
+        get: (id, options) => this.getSkillRoleModels(id, options),
+        put: (id, body, options) => this.putSkillRoleModel(id, body, options),
       },
     };
 
@@ -1299,6 +1334,36 @@ export class BaoBoxClient {
 
   private async listLlmCatalog(): Promise<LlmCatalog> {
     const body = await this.requestAdmin<LlmCatalog>("GET", "/api/v1/llm-providers");
+    return body.data;
+  }
+
+  // 0.19.0 — per-role guard model config. Uses the dual-auth skills path
+  // (adminSecret OR apiKey with skills:read/skills:write) so the Skill Studio
+  // BFF can call these with an apiKey-only client scoped to a single tenant.
+  private async getSkillRoleModels(
+    skillId: string,
+    options?: SkillScopeOptions,
+  ): Promise<SkillRoleModelsMap> {
+    const body = await this.requestSkills<SkillRoleModelsMap>(
+      "GET",
+      `/api/v1/skills/${encodeURIComponent(skillId)}/role-models`,
+      undefined,
+      tenantScopeHeaders(options),
+    );
+    return body.data;
+  }
+
+  private async putSkillRoleModel(
+    skillId: string,
+    reqBody: { role: ModelRole; chain: RoleModelChainEntry[] },
+    options?: SkillScopeOptions,
+  ): Promise<{ role: ModelRole; chain: SkillRoleModel[] }> {
+    const body = await this.requestSkills<{ role: ModelRole; chain: SkillRoleModel[] }>(
+      "PUT",
+      `/api/v1/skills/${encodeURIComponent(skillId)}/role-models`,
+      { role: reqBody.role, chain: reqBody.chain },
+      tenantScopeHeaders(options),
+    );
     return body.data;
   }
 

@@ -2590,3 +2590,152 @@ describe("skill reasoningEffort (#301)", () => {
     expect(skill.reasoningEffort).toBe("xhigh");
   });
 });
+
+// ─── skills.roleModels (0.19.0) ───────────────────────────────────────────────
+
+describe("skills.roleModels", () => {
+  const rawRoleModelsMap = {
+    main: [
+      {
+        skillId: "sk_1",
+        role: "main",
+        position: 0,
+        llmIntegrationId: "int_abc",
+        model: "openai/gpt-5",
+        llmSource: "pinned",
+      },
+    ],
+    preflight_guard: [],
+    postflight_guard: [],
+    eval_judge: [],
+  };
+
+  it("roleModels.get hits GET /api/v1/skills/:id/role-models and returns unwrapped map", async () => {
+    const seen: { url?: string; method?: string; auth?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      seen.auth = (init.headers as Record<string, string>).authorization;
+      return jsonResponse(200, {
+        data: rawRoleModelsMap,
+        metadata: { requestId: "r_rm1", latencyMs: 3 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm-secret",
+      fetch,
+    });
+
+    const map = await bb.skills.roleModels.get("sk_1");
+
+    expect(seen.method).toBe("GET");
+    expect(seen.url).toBe("https://api.example.com/api/v1/skills/sk_1/role-models");
+    expect(seen.auth).toBe("Bearer adm-secret");
+    expect(map.main).toHaveLength(1);
+    expect(map.main[0]?.role).toBe("main");
+    expect(map.main[0]?.llmSource).toBe("pinned");
+    expect(map.preflight_guard).toEqual([]);
+  });
+
+  it("roleModels.get uses apiKey when no adminSecret and sends tenant header", async () => {
+    const seen: { url?: string; auth?: string; tenant?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      const headers = init.headers as Record<string, string>;
+      seen.auth = headers.authorization;
+      seen.tenant = headers["X-BaoBox-Tenant-Id"];
+      return jsonResponse(200, {
+        data: rawRoleModelsMap,
+        metadata: { requestId: "r_rm2", latencyMs: 2 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "skb_tenant_key",
+      fetch,
+    });
+
+    await bb.skills.roleModels.get("sk_1", { tenantId: "t_abc" });
+
+    expect(seen.url).toBe("https://api.example.com/api/v1/skills/sk_1/role-models");
+    expect(seen.auth).toBe("Bearer skb_tenant_key");
+    expect(seen.tenant).toBe("t_abc");
+  });
+
+  it("roleModels.put hits PUT /api/v1/skills/:id/role-models with the right body and returns unwrapped result", async () => {
+    const seen: { url?: string; method?: string; body?: unknown; auth?: string } = {};
+    const rawPutResponse = {
+      role: "postflight_guard",
+      chain: [
+        {
+          skillId: "sk_1",
+          role: "postflight_guard",
+          position: 0,
+          llmIntegrationId: null,
+          model: "openai/gpt-5-mini",
+          llmSource: "platform",
+        },
+      ],
+    };
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      seen.body = JSON.parse(init.body as string);
+      seen.auth = (init.headers as Record<string, string>).authorization;
+      return jsonResponse(200, {
+        data: rawPutResponse,
+        metadata: { requestId: "r_rm3", latencyMs: 4 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm-secret",
+      fetch,
+    });
+
+    const result = await bb.skills.roleModels.put("sk_1", {
+      role: "postflight_guard",
+      chain: [{ llmIntegrationId: null, model: "openai/gpt-5-mini", llmSource: "platform" }],
+    });
+
+    expect(seen.method).toBe("PUT");
+    expect(seen.url).toBe("https://api.example.com/api/v1/skills/sk_1/role-models");
+    expect(seen.auth).toBe("Bearer adm-secret");
+    expect(seen.body).toEqual({
+      role: "postflight_guard",
+      chain: [{ llmIntegrationId: null, model: "openai/gpt-5-mini", llmSource: "platform" }],
+    });
+    expect(result.role).toBe("postflight_guard");
+    expect(result.chain).toHaveLength(1);
+    expect(result.chain[0]?.position).toBe(0);
+    expect(result.chain[0]?.llmSource).toBe("platform");
+  });
+
+  it("roleModels.put uses apiKey and sends tenant scope header", async () => {
+    const seen: { auth?: string; tenant?: string } = {};
+    const fetch = fakeFetch((_url, init) => {
+      const headers = init.headers as Record<string, string>;
+      seen.auth = headers.authorization;
+      seen.tenant = headers["X-BaoBox-Tenant-Id"];
+      return jsonResponse(200, {
+        data: { role: "main", chain: [] },
+        metadata: { requestId: "r_rm4", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "skb_tenant_key",
+      fetch,
+    });
+
+    await bb.skills.roleModels.put(
+      "sk_1",
+      { role: "main", chain: [{ llmIntegrationId: "int_x", model: null, llmSource: "tenant_default" }] },
+      { tenantId: "t_xyz" },
+    );
+
+    expect(seen.auth).toBe("Bearer skb_tenant_key");
+    expect(seen.tenant).toBe("t_xyz");
+  });
+});

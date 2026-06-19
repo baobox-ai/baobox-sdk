@@ -859,6 +859,60 @@ export type SseEvent =
   | { event: "heartbeat"; data: Record<string, never> }
   | { event: "error"; data: { code: string; message: string } };
 
+// ─── Per-role guard model config (0.19.0) ────────────────────────────────────
+//
+// Mirrors BaoBox's `/api/v1/skills/:id/role-models` surface. Each skill has up
+// to four model roles; each role supports a chain of up to 4 model entries so
+// the runtime can fall back gracefully when the primary model is unavailable.
+//
+// Bearer/apiKey-gated, tenant-scoped (apiKey tenant implicit; adminSecret
+// callers scope via `X-BaoBox-Tenant-Id`). Requires `skills:read` (GET) or
+// `skills:write` (PUT).
+
+/**
+ * The four functional roles a model can play within a skill's execution.
+ *
+ * - `"main"` — the primary generation model for the skill's main turn.
+ * - `"preflight_guard"` — the model that runs the pre-flight safety check.
+ * - `"postflight_guard"` — the model that runs the post-flight safety check.
+ * - `"eval_judge"` — the model used as the judge during eval runs.
+ */
+export type ModelRole = "main" | "preflight_guard" | "postflight_guard" | "eval_judge";
+
+/**
+ * A single model entry in a role's chain, as returned by the server.
+ * Position is server-assigned (0-based, ascending order in the chain).
+ */
+export type SkillRoleModel = {
+  skillId: string;
+  role: ModelRole;
+  /** 0-based position within the chain (server-assigned). */
+  position: number;
+  /** ID of the LLM integration to use. Null when `llmSource` is `"platform"`. */
+  llmIntegrationId: string | null;
+  /** Provider-namespaced model id (e.g. `"openai/gpt-5"`). Null to inherit the integration default. */
+  model: string | null;
+  /** How the model is resolved at runtime. */
+  llmSource: "tenant_default" | "platform" | "pinned";
+};
+
+/**
+ * A single entry in the chain array sent to `PUT /api/v1/skills/:id/role-models`.
+ * The server assigns `skillId`, `role`, and `position` — callers only supply the
+ * model-selection fields. Chain length is capped at 4 entries server-side.
+ */
+export type RoleModelChainEntry = {
+  llmIntegrationId: string | null;
+  model: string | null;
+  llmSource: "tenant_default" | "platform" | "pinned";
+};
+
+/**
+ * Returned by `client.skills.roleModels.get()`. Maps each `ModelRole` to its
+ * current chain of model entries.
+ */
+export type SkillRoleModelsMap = Record<ModelRole, SkillRoleModel[]>;
+
 // ─── LLM catalog (0.18.0) ────────────────────────────────────────────────────
 //
 // Read-only mirror of the server's `/api/v1/llm-providers` response.
