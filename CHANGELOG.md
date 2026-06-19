@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.19.0
+
+Per-role guard model config — `client.skills.roleModels` (#328 PR-2).
+
+### Added
+
+- `client.skills.roleModels.get(skillId, options?)` — fetches
+  `GET /api/v1/skills/:id/role-models` and returns the unwrapped
+  `Record<ModelRole, SkillRoleModel[]>` map. Requires `skills:read`.
+- `client.skills.roleModels.put(skillId, { role, chain }, options?)` — writes
+  `PUT /api/v1/skills/:id/role-models` and returns the unwrapped
+  `{ role: ModelRole, chain: SkillRoleModel[] }` for the updated role.
+  Requires `skills:write`. Chain length is capped at 4 entries server-side.
+- Both methods use the dual-auth skills path (`requestSkills`): adminSecret
+  when available, otherwise the apiKey. Tenant-scoped via `options.tenantId`
+  (`X-BaoBox-Tenant-Id` header); on an apiKey client the key's tenant is
+  implicit and `options` may be omitted.
+- New public types (all exported from the package root):
+  - `ModelRole` — `"main" | "preflight_guard" | "postflight_guard" | "eval_judge"`.
+  - `SkillRoleModel` — full server-side shape: `{ skillId, role, position, llmIntegrationId, model, llmSource }`.
+  - `RoleModelChainEntry` — PUT input shape (no `skillId`/`role`/`position`; server assigns those).
+  - `SkillRoleModelsMap` — `Record<ModelRole, SkillRoleModel[]>`, returned by `roleModels.get()`.
+
+### Notes
+
+**ADDITIVE-ONLY** — no existing fields renamed or removed. All prior SDK methods are unchanged.
+
+The Skill Studio BFF can now call `client.skills.roleModels.get/put()` with its
+per-tenant apiKey to read and update the guard model chain without needing the
+cross-tenant admin secret.
+
 ## 0.18.0
 
 Model catalog surface — `client.catalog.list()` (#320 PR-B).
