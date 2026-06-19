@@ -1676,6 +1676,91 @@ describe("attachmentWithStrategy (0.7.0)", () => {
 
 });
 
+// ─── 0.18.0 — LLM model catalog ──────────────────────────────────────────────
+describe("catalog.list (0.18.0)", () => {
+  it("GETs /api/v1/llm-providers with adminSecret and returns unwrapped data", async () => {
+    const seen: { url?: string; method?: string; auth?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      seen.auth = (init.headers as Record<string, string>).authorization;
+      return jsonResponse(200, {
+        data: {
+          providers: [
+            {
+              id: "openai",
+              displayName: "OpenAI",
+              defaultModel: "openai/gpt-5",
+              docsUrl: "https://platform.openai.com/docs",
+              pricingUrl: "https://openai.com/pricing",
+              models: [
+                {
+                  id: "openai/gpt-5",
+                  displayName: "GPT-5",
+                  paramProfile: "reasoning",
+                  reasoningEfforts: ["low", "medium", "high"],
+                  contextWindow: 200000,
+                  pricing: {
+                    inputUsdPerMTok: 2.5,
+                    outputUsdPerMTok: 10,
+                    asOf: "2026-06-01",
+                  },
+                },
+                {
+                  id: "openai/gpt-5-mini",
+                  displayName: "GPT-5 Mini",
+                  paramProfile: "sampling",
+                  contextWindow: 128000,
+                },
+              ],
+            },
+          ],
+          reasoningEfforts: ["low", "medium", "high", "xhigh"],
+        },
+        metadata: { requestId: "r_cat", latencyMs: 8 },
+      });
+    });
+
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm-secret",
+      fetch,
+    });
+
+    const catalog = await bb.catalog.list();
+    expect(seen.method).toBe("GET");
+    expect(seen.url).toBe("https://api.example.com/api/v1/llm-providers");
+    expect(seen.auth).toBe("Bearer adm-secret");
+    expect(catalog.reasoningEfforts).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(catalog.providers).toHaveLength(1);
+    const [provider] = catalog.providers;
+    expect(provider?.id).toBe("openai");
+    expect(provider?.defaultModel).toBe("openai/gpt-5");
+    expect(provider?.models).toHaveLength(2);
+    const [reasoning, sampling] = provider!.models;
+    expect(reasoning?.paramProfile).toBe("reasoning");
+    expect(reasoning?.reasoningEfforts).toEqual(["low", "medium", "high"]);
+    expect(reasoning?.pricing?.inputUsdPerMTok).toBe(2.5);
+    expect(sampling?.paramProfile).toBe("sampling");
+    expect(sampling?.contextWindow).toBe(128000);
+    expect(sampling?.pricing).toBeUndefined();
+  });
+
+  it("propagates 401 as BaoBoxError when called with apiKey-only client", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(401, {
+        error: { code: "UNAUTHORIZED", message: "adminSecret required", requestId: "r_401" },
+      }),
+    );
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+    await expect(bb.catalog.list()).rejects.toBeInstanceOf(BaoBoxError);
+  });
+});
+
 // ─── B1 (0.12.0) — guardrail config surfaces ───────────────────────────────
 describe("skills.updateGuardrails (B1)", () => {
   it("PATCHes the admin guardrails route with addenda only and bearer auth", async () => {
