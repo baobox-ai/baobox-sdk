@@ -434,6 +434,13 @@ export type SkillCreateRequest = {
    * server-side default. See `ReasoningEffort` for the four tiers.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Pin a specific tenant LLM integration (the model runs on that
+   * integration's provider/key). `null` clears the pin → tenant default.
+   * Tenant-scoped; the key's tenant must own the integration (server 4xx
+   * otherwise).
+   */
+  llmIntegrationId?: string | null;
   sourceUrl?: string;
   files?: SkillFileInput[];
   /**

@@ -2195,6 +2195,7 @@ function buildSkillWriteBody(req: SkillCreateRequest | SkillUpdateRequest): Reco
   // 0.8.0: BaoBox admin surface accepts camelCase request bodies after the
   // ι epic. The previous snake_case keys are no longer recognized.
   // 0.17.0: reasoningEffort forwarded when set; compactObject drops undefined.
+  // 0.21.0: llmIntegrationId forwarded when set (null clears the pin).
   return compactObject({
     name: req.name,
     description: req.description,
@@ -2203,6 +2204,7 @@ function buildSkillWriteBody(req: SkillCreateRequest | SkillUpdateRequest): Reco
     temperature: req.temperature,
     maxTokens: req.maxTokens,
     reasoningEffort: req.reasoningEffort,
+    llmIntegrationId: req.llmIntegrationId,
     sourceUrl: req.sourceUrl,
     files: req.files,
   });
