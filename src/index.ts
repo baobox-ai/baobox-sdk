@@ -610,15 +610,14 @@ export class BaoBoxClient {
    * LLM model catalog — non-tenant, static metadata about the providers
    * and models BaoBox is configured with.
    *
-   * ADMIN_SECRET-gated: an apiKey-only client will receive 401 (same auth
-   * posture as `/api/v1/tools`). The catalog is read-only from the SDK side.
+   * Readable with an apiKey (`skills:read`) OR the admin secret (#330). The
+   * catalog is read-only from the SDK side.
    */
   public readonly catalog: {
     /**
      * Fetch all providers and models from `GET /api/v1/llm-providers`.
      *
-     * ADMIN_SECRET-gated — an apiKey-only client will get 401 (the catalog
-     * is non-tenant, static data; same posture as `/tools`).
+     * apiKey (`skills:read`) or adminSecret. Read-only static metadata.
      */
     list: () => Promise<LlmCatalog>;
   };
@@ -1364,7 +1363,10 @@ export class BaoBoxClient {
   }
 
   private async listLlmCatalog(): Promise<LlmCatalog> {
-    const body = await this.requestAdmin<LlmCatalog>("GET", "/api/v1/llm-providers");
+    // requestSkills: apiKey when the client has no adminSecret (the Skill
+    // Studio BFF case), adminSecret otherwise. The backend route is
+    // tenantReadAuth (apiKey skills:read OR adminSecret) since #330.
+    const body = await this.requestSkills<LlmCatalog>("GET", "/api/v1/llm-providers");
     return body.data;
   }
 
@@ -1427,7 +1429,10 @@ export class BaoBoxClient {
   }
 
   private async listTools(): Promise<Tool[]> {
-    const body = await this.requestAdmin<RawTool[]>("GET", "/api/v1/tools");
+    // requestSkills: apiKey (Skill Studio BFF) or adminSecret. The list route
+    // is tenantReadAuth-gated — a tenant apiKey gets own + global tools; the
+    // admin secret gets all. Tool create/delete stay adminSecret (below).
+    const body = await this.requestSkills<RawTool[]>("GET", "/api/v1/tools");
     return body.data.map(mapTool);
   }
 
