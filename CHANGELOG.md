@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.22.0
+
+`catalog.list()` and `tools.list()` now work on an apiKey-only client (the Skill Studio BFF).
+
+### Fixed
+
+- `catalog.list()` (`GET /api/v1/llm-providers`) and `tools.list()`
+  (`GET /api/v1/tools`) previously used the **adminSecret** request path
+  (`requestAdmin`). An apiKey-only client (no `ADMIN_SECRET` — e.g. the Skill
+  Studio BFF) therefore failed these calls, surfacing as a 500 on the skill
+  page's auto-loaded `/models` and `/tools` requests. Both now use
+  `requestSkills`, which sends the apiKey when the client has no admin secret
+  (and the admin secret otherwise). Backend routes are apiKey-readable: the
+  catalog via `tenantReadAuth` (#330), the tool list via the matching backend
+  change (tenant apiKey → own + global tools; admin → all).
+- **Non-breaking**: an adminSecret client behaves identically (requestSkills
+  resolves to the admin secret when present). Tool `create`/`delete` remain
+  adminSecret-gated.
+
 ## 0.21.0
 
 Pin a tenant LLM integration on a skill — `llmIntegrationId` on skill create/update (#337 PR-B).
