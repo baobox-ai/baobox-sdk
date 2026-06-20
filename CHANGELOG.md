@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.20.0
+
+Tenant LLM integration reads — `client.llmIntegrations` (#330 PR-2).
+
+### Added
+
+- `client.llmIntegrations.list(options?)` — fetches
+  `GET /api/v1/llm-integrations` and returns the unwrapped `LlmIntegration[]`
+  array. **API-safe**: no real credentials are returned; the server masks
+  secrets as `"***"` in `apiKeyMask`. Requires `skills:read`.
+- `client.llmIntegrations.listModels(integrationId, options?)` — fetches
+  `GET /api/v1/llm-integrations/:id/models` and returns the unwrapped
+  `IntegrationModelsView` (models from catalog + provider live list, plus
+  `providerListError` when the upstream fetch fails). Requires `skills:read`.
+- Both methods use the dual-auth skills path (`requestSkills`): adminSecret
+  when available, otherwise the apiKey. Tenant-scoped via `options.tenantId`
+  (`X-BaoBox-Tenant-Id` header); on an apiKey client the key's tenant is
+  implicit and `options` may be omitted.
+- New public types (all exported from the package root):
+  - `LlmIntegration` — API-safe integration row: `{ id, displayName, provider, defaultModel, isDefault, apiKeyMask }`.
+  - `IntegrationModel` — per-model entry: `{ id, displayName, source, paramProfile, reasoningEfforts, pricing }`.
+  - `IntegrationModelsView` — `{ integrationId, provider, models, providerListError }`, returned by `listModels()`.
+
+### Notes
+
+**ADDITIVE-ONLY** — no existing fields renamed or removed. All prior SDK methods are unchanged.
+
+The Skill Studio BFF can now call `client.llmIntegrations.list()` and
+`client.llmIntegrations.listModels()` with its per-tenant apiKey to power an
+integration-first model picker — no cross-tenant admin secret needed in the BFF.
+
 ## 0.19.0
 
 Per-role guard model config — `client.skills.roleModels` (#328 PR-2).

@@ -5,7 +5,10 @@ import type {
   AdminSkillGuardrailUpdateRequest,
   AdminSkillGuardrailUpdateResult,
   ApiKey,
+  IntegrationModelsView,
+  IntegrationModel,
   LlmCatalog,
+  LlmIntegration,
   ModelRole,
   RoleModelChainEntry,
   SkillRoleModel,
@@ -620,6 +623,29 @@ export class BaoBoxClient {
     list: () => Promise<LlmCatalog>;
   };
   /**
+   * Tenant-scoped LLM integration reads — lets the Skill Studio BFF offer
+   * an integration-first model picker.
+   *
+   * Both methods are `skills:read`-gated. On an apiKey client the key's
+   * tenant is implicit; on an adminSecret client pass `{ tenantId }` to
+   * scope the request via `X-BaoBox-Tenant-Id`.
+   *
+   * The list response is **API-safe** — no real credentials are returned;
+   * secrets appear only as `"***"` in `apiKeyMask`.
+   */
+  public readonly llmIntegrations: {
+    /**
+     * List all LLM integrations configured for the tenant.
+     * Hits `GET /api/v1/llm-integrations`. Requires `skills:read`.
+     */
+    list: (options?: { tenantId?: string }) => Promise<LlmIntegration[]>;
+    /**
+     * List the models available for a specific integration.
+     * Hits `GET /api/v1/llm-integrations/:id/models`. Requires `skills:read`.
+     */
+    listModels: (integrationId: string, options?: { tenantId?: string }) => Promise<IntegrationModelsView>;
+  };
+  /**
    * Builders for the `attachments[]` field on `chat()` / `workflow()`.
    * Pure helpers — they don't touch the network. Re-exported as standalone
    * `attachmentFromUrl` / `attachmentFromInline` / `attachmentFromRef`
@@ -765,6 +791,11 @@ export class BaoBoxClient {
 
     this.catalog = {
       list: () => this.listLlmCatalog(),
+    };
+
+    this.llmIntegrations = {
+      list: (options) => this.listLlmIntegrations(options),
+      listModels: (id, options) => this.listLlmIntegrationModels(id, options),
     };
 
     this.attachments = {
@@ -1334,6 +1365,34 @@ export class BaoBoxClient {
 
   private async listLlmCatalog(): Promise<LlmCatalog> {
     const body = await this.requestAdmin<LlmCatalog>("GET", "/api/v1/llm-providers");
+    return body.data;
+  }
+
+  // 0.20.0 — tenant-scoped LLM integration reads. Uses the dual-auth skills
+  // path (adminSecret OR apiKey with skills:read) so the Skill Studio BFF can
+  // call these with an apiKey-only client scoped to a single tenant.
+  private async listLlmIntegrations(
+    options?: { tenantId?: string },
+  ): Promise<LlmIntegration[]> {
+    const body = await this.requestSkills<LlmIntegration[]>(
+      "GET",
+      "/api/v1/llm-integrations",
+      undefined,
+      tenantScopeHeaders(options),
+    );
+    return body.data;
+  }
+
+  private async listLlmIntegrationModels(
+    integrationId: string,
+    options?: { tenantId?: string },
+  ): Promise<IntegrationModelsView> {
+    const body = await this.requestSkills<IntegrationModelsView>(
+      "GET",
+      `/api/v1/llm-integrations/${encodeURIComponent(integrationId)}/models`,
+      undefined,
+      tenantScopeHeaders(options),
+    );
     return body.data;
   }
 
