@@ -300,6 +300,71 @@ describe("admin auth surfaces", () => {
     expect(called).toBe(false);
   });
 
+  // #337 PR-B — llmIntegrationId forwarded in the PUT body.
+  it("skills.update sends llmIntegrationId in the request body", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(init.body as string) as Record<string, unknown>;
+      return jsonResponse(200, {
+        data: {
+          id: "sk_1",
+          name: "n",
+          description: "d",
+          systemPrompt: "p",
+          model: "gpt-5",
+          temperature: 0.2,
+          maxTokens: 4096,
+          sourceUrl: null,
+          tenantId: "t_a",
+          createdAt: "2026-04-23T00:00:00Z",
+          updatedAt: "2026-04-23T00:00:00Z",
+        },
+        metadata: { requestId: "r", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "skb_key",
+      adminSecret: "adm-secret",
+      fetch,
+    });
+    await bb.skills.update("sk_1", { llmIntegrationId: "int_x" }, { tenantId: "t_a" });
+    expect(seenBody.llmIntegrationId).toBe("int_x");
+  });
+
+  // #337 PR-B — null clears the pin; compactObject must not strip null.
+  it("skills.update sends llmIntegrationId: null to clear the pin", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(init.body as string) as Record<string, unknown>;
+      return jsonResponse(200, {
+        data: {
+          id: "sk_1",
+          name: "n",
+          description: "d",
+          systemPrompt: "p",
+          model: "gpt-5",
+          temperature: 0.2,
+          maxTokens: 4096,
+          sourceUrl: null,
+          tenantId: "t_a",
+          createdAt: "2026-04-23T00:00:00Z",
+          updatedAt: "2026-04-23T00:00:00Z",
+        },
+        metadata: { requestId: "r", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "skb_key",
+      adminSecret: "adm-secret",
+      fetch,
+    });
+    await bb.skills.update("sk_1", { llmIntegrationId: null }, { tenantId: "t_a" });
+    expect(Object.prototype.hasOwnProperty.call(seenBody, "llmIntegrationId")).toBe(true);
+    expect(seenBody.llmIntegrationId).toBeNull();
+  });
+
   // #257 — tenant-scoped authoring over the per-tenant apiKey.
   it("skills.create uses the apiKey path and sends the tenant header", async () => {
     const seen: { url?: string; method?: string; auth?: string; tenant?: string } = {};

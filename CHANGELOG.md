@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.21.0
+
+Pin a tenant LLM integration on a skill — `llmIntegrationId` on skill create/update (#337 PR-B).
+
+### Added
+
+- `SkillCreateRequest.llmIntegrationId?: string | null` — pin a specific tenant
+  LLM integration on the skill (the model runs on that integration's
+  provider/key). Pass `null` to clear the pin and revert to the tenant default.
+  Tenant-scoped; the key's tenant must own the integration (server returns 4xx
+  otherwise).
+- `SkillUpdateRequest` inherits the field automatically (it is
+  `Partial<SkillCreateRequest>`).
+- `buildSkillWriteBody` forwards `llmIntegrationId` in the PUT/POST body when
+  set; `null` is preserved (not stripped) so the clear-pin path works.
+
+### Notes
+
+**ADDITIVE-ONLY** — no existing fields renamed or removed. All prior SDK methods
+and types are unchanged.
+
+---
+
 ## 0.20.0
 
 Tenant LLM integration reads — `client.llmIntegrations` (#330 PR-2).
