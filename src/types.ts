@@ -968,6 +968,83 @@ export type LlmCatalog = {
   reasoningEfforts: string[];
 };
 
+// ─── LLM integrations (0.20.0) ───────────────────────────────────────────────
+//
+// Tenant-scoped, API-safe view of the integrations a tenant has configured.
+// Readable via `skills:read`-gated bearer (apiKey or adminSecret).
+//
+// `GET /api/v1/llm-integrations`         → { data: LlmIntegration[] }
+// `GET /api/v1/llm-integrations/:id/models` → { data: IntegrationModelsView }
+//
+// The list response is API-SAFE — no real API keys are returned; the server
+// masks secrets as `"***"` in `apiKeyMask`. Do NOT add an `apiKey` field here.
+
+/**
+ * API-safe view of a tenant's configured LLM integration, as returned by
+ * `GET /api/v1/llm-integrations`. The real credential is never exposed —
+ * only the masked hint (`apiKeyMask`) is present.
+ *
+ * Requires a key with `skills:read`. Tenant-scoped: an apiKey client's
+ * tenant is implicit; an adminSecret client passes `{ tenantId }`.
+ */
+export type LlmIntegration = {
+  /** Integration id (e.g. `"int_abc123"`). */
+  id: string;
+  displayName: string;
+  /** Provider slug (e.g. `"openai"`, `"anthropic"`). */
+  provider: string;
+  /** Provider-namespaced default model id (e.g. `"openai/gpt-5"`). */
+  defaultModel: string;
+  /** Whether this is the tenant's default integration. */
+  isDefault: boolean;
+  /** Masked credential hint — always `"***"`. Never the real key. */
+  apiKeyMask: string;
+};
+
+/**
+ * A single model entry within an `IntegrationModelsView`, combining static
+ * catalog metadata with provider-live availability.
+ */
+export type IntegrationModel = {
+  /** Provider-namespaced model id (e.g. `"openai/gpt-5"`). */
+  id: string;
+  displayName: string;
+  /** Where this model entry originates: static catalog, provider-live list, or custom. */
+  source: "catalog" | "provider" | "custom";
+  /** Whether the model exposes sampling or reasoning parameters. */
+  paramProfile: "sampling" | "reasoning";
+  /**
+   * Reasoning effort tiers this model accepts. Present when
+   * `paramProfile === "reasoning"`; absent otherwise.
+   */
+  reasoningEfforts: string[];
+  /** Pricing snapshot, if available from the catalog. */
+  pricing: {
+    /** Cost in USD per million input tokens. */
+    inputUsdPerMTok: number;
+    /** Cost in USD per million output tokens. */
+    outputUsdPerMTok: number;
+    /** ISO date the pricing was last recorded (e.g. `"2026-06-01"`). */
+    asOf: string;
+  } | null;
+};
+
+/**
+ * Returned by `client.llmIntegrations.listModels()`. Contains the full model
+ * list for one integration, combining catalog data with any provider-live
+ * models. If the provider list fetch failed, `providerListError` is non-null.
+ *
+ * Requires a key with `skills:read`. Tenant-scoped.
+ */
+export type IntegrationModelsView = {
+  integrationId: string;
+  /** Provider slug (e.g. `"openai"`). */
+  provider: string;
+  models: IntegrationModel[];
+  /** Non-null when the server could not fetch the live provider model list. */
+  providerListError: string | null;
+};
+
 // ─── ChatStreamRequest (0.9.0) ────────────────────────────────────────────────
 
 /** Request shape for `client.chatStream()`. Same fields as `ChatRequest`. */

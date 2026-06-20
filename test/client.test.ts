@@ -2739,3 +2739,221 @@ describe("skills.roleModels", () => {
     expect(seen.tenant).toBe("t_xyz");
   });
 });
+
+// ─── 0.20.0 — LLM integrations ────────────────────────────────────────────────
+
+describe("llmIntegrations.list (0.20.0)", () => {
+  const rawIntegrations = [
+    {
+      id: "int_abc",
+      displayName: "Acme OpenAI",
+      provider: "openai",
+      defaultModel: "openai/gpt-5",
+      isDefault: true,
+      apiKeyMask: "***",
+    },
+    {
+      id: "int_def",
+      displayName: "Acme Anthropic",
+      provider: "anthropic",
+      defaultModel: "anthropic/claude-opus-4",
+      isDefault: false,
+      apiKeyMask: "***",
+    },
+  ];
+
+  it("GETs /api/v1/llm-integrations with adminSecret and returns unwrapped array", async () => {
+    const seen: { url?: string; method?: string; auth?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      seen.auth = (init.headers as Record<string, string>).authorization;
+      return jsonResponse(200, {
+        data: rawIntegrations,
+        metadata: { requestId: "r_int1", latencyMs: 5 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm-secret",
+      fetch,
+    });
+
+    const integrations = await bb.llmIntegrations.list();
+
+    expect(seen.method).toBe("GET");
+    expect(seen.url).toBe("https://api.example.com/api/v1/llm-integrations");
+    expect(seen.auth).toBe("Bearer adm-secret");
+    expect(integrations).toHaveLength(2);
+    const [first, second] = integrations;
+    expect(first?.id).toBe("int_abc");
+    expect(first?.provider).toBe("openai");
+    expect(first?.isDefault).toBe(true);
+    expect(first?.apiKeyMask).toBe("***");
+    expect(second?.id).toBe("int_def");
+    expect(second?.isDefault).toBe(false);
+  });
+
+  it("uses apiKey when no adminSecret and sends X-BaoBox-Tenant-Id header", async () => {
+    const seen: { url?: string; auth?: string; tenant?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      const headers = init.headers as Record<string, string>;
+      seen.auth = headers.authorization;
+      seen.tenant = headers["X-BaoBox-Tenant-Id"];
+      return jsonResponse(200, {
+        data: rawIntegrations,
+        metadata: { requestId: "r_int2", latencyMs: 3 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "skb_tenant_key",
+      fetch,
+    });
+
+    await bb.llmIntegrations.list({ tenantId: "t_abc" });
+
+    expect(seen.url).toBe("https://api.example.com/api/v1/llm-integrations");
+    expect(seen.auth).toBe("Bearer skb_tenant_key");
+    expect(seen.tenant).toBe("t_abc");
+  });
+});
+
+describe("llmIntegrations.listModels (0.20.0)", () => {
+  const rawModelsView = {
+    integrationId: "int_abc",
+    provider: "openai",
+    models: [
+      {
+        id: "openai/gpt-5",
+        displayName: "GPT-5",
+        source: "catalog",
+        paramProfile: "reasoning",
+        reasoningEfforts: ["low", "medium", "high"],
+        pricing: { inputUsdPerMTok: 2.5, outputUsdPerMTok: 10, asOf: "2026-06-01" },
+      },
+      {
+        id: "openai/gpt-5-mini",
+        displayName: "GPT-5 Mini",
+        source: "provider",
+        paramProfile: "sampling",
+        reasoningEfforts: [],
+        pricing: null,
+      },
+    ],
+    providerListError: null,
+  };
+
+  it("GETs /api/v1/llm-integrations/:id/models with adminSecret and returns unwrapped view", async () => {
+    const seen: { url?: string; method?: string; auth?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      seen.auth = (init.headers as Record<string, string>).authorization;
+      return jsonResponse(200, {
+        data: rawModelsView,
+        metadata: { requestId: "r_mod1", latencyMs: 6 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm-secret",
+      fetch,
+    });
+
+    const view = await bb.llmIntegrations.listModels("int_abc");
+
+    expect(seen.method).toBe("GET");
+    expect(seen.url).toBe(
+      "https://api.example.com/api/v1/llm-integrations/int_abc/models",
+    );
+    expect(seen.auth).toBe("Bearer adm-secret");
+    expect(view.integrationId).toBe("int_abc");
+    expect(view.provider).toBe("openai");
+    expect(view.providerListError).toBeNull();
+    expect(view.models).toHaveLength(2);
+    const [reasoning, sampling] = view.models;
+    expect(reasoning?.id).toBe("openai/gpt-5");
+    expect(reasoning?.source).toBe("catalog");
+    expect(reasoning?.paramProfile).toBe("reasoning");
+    expect(reasoning?.reasoningEfforts).toEqual(["low", "medium", "high"]);
+    expect(reasoning?.pricing?.inputUsdPerMTok).toBe(2.5);
+    expect(sampling?.source).toBe("provider");
+    expect(sampling?.paramProfile).toBe("sampling");
+    expect(sampling?.pricing).toBeNull();
+  });
+
+  it("uses apiKey and sends X-BaoBox-Tenant-Id header", async () => {
+    const seen: { url?: string; auth?: string; tenant?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      const headers = init.headers as Record<string, string>;
+      seen.auth = headers.authorization;
+      seen.tenant = headers["X-BaoBox-Tenant-Id"];
+      return jsonResponse(200, {
+        data: rawModelsView,
+        metadata: { requestId: "r_mod2", latencyMs: 4 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "skb_tenant_key",
+      fetch,
+    });
+
+    await bb.llmIntegrations.listModels("int_abc", { tenantId: "t_xyz" });
+
+    expect(seen.url).toBe(
+      "https://api.example.com/api/v1/llm-integrations/int_abc/models",
+    );
+    expect(seen.auth).toBe("Bearer skb_tenant_key");
+    expect(seen.tenant).toBe("t_xyz");
+  });
+
+  it("URL-encodes integrationId in the path", async () => {
+    const seen: { url?: string } = {};
+    const fetch = fakeFetch((url) => {
+      seen.url = url;
+      return jsonResponse(200, {
+        data: { ...rawModelsView, integrationId: "int_a/b" },
+        metadata: { requestId: "r_mod3", latencyMs: 2 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    await bb.llmIntegrations.listModels("int_a/b");
+
+    expect(seen.url).toBe(
+      "https://api.example.com/api/v1/llm-integrations/int_a%2Fb/models",
+    );
+  });
+
+  it("surfaces providerListError when the server returns one", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: {
+          integrationId: "int_abc",
+          provider: "openai",
+          models: [],
+          providerListError: "upstream timeout",
+        },
+        metadata: { requestId: "r_mod4", latencyMs: 1 },
+      }),
+    );
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const view = await bb.llmIntegrations.listModels("int_abc");
+
+    expect(view.models).toHaveLength(0);
+    expect(view.providerListError).toBe("upstream timeout");
+  });
+});
