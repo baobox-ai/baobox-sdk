@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.23.0
+
+Surface the eval capture + replay capabilities (Epic T15) — `modelOverride` on
+runs, `matchMode` / `expectedOutput` / `sourceSessionId` on cases, and
+`eval.draftFromEvent()`.
+
+### Added
+
+- `RunEvalRequest.modelOverride?: string` — optional model override for an eval
+  run (`POST /api/v1/eval/run`). When set it wins over the skill/integration
+  default model and is recorded into `EvalRun.metadata.model` so two runs are
+  comparable. Omit to use the resolved default.
+- `CreateEvalCaseRequest` gains three optional fields
+  (`POST /api/v1/eval/skills/:skillId/tests`):
+  - `matchMode?: "judge" | "exact" | "contains"` — how the case is scored.
+    Omit to let the server apply its default (`"judge"`).
+  - `expectedOutput?: string | null` — literal reference output for
+    deterministic (`exact`/`contains`) cases. Pass `null` to clear.
+  - `sourceSessionId?: string | null` — capture provenance for promoted cases.
+- `EvalCase` now surfaces `matchMode`, `expectedOutput`, and `sourceSessionId`
+  on reads. Older backends that omit the fields are tolerated (`matchMode`
+  defaults to `"judge"`, the others to `null`).
+- `client.eval.draftFromEvent(eventId, { assist? })` — resolve a captured
+  `llm_call` event into a DRAFT eval case via
+  `POST /api/v1/eval/draft-from-event` (admin-secret gated). Nothing is
+  persisted; use the returned fields to prefill `eval.tests.create()`. Pass
+  `{ assist: true }` to also get a meta-LLM-refined suggestion
+  (`DraftFromEvent.assist`). New types: `DraftFromEvent`,
+  `DraftFromEventOptions`, `DraftFromEventLlmContext`, `DraftFromEventAssist`,
+  `EvalMatchMode`.
+
+### Notes
+
+- **ADDITIVE-ONLY** — no existing fields renamed or removed; every new
+  request field is optional, so all prior callers are unchanged.
+- The Skill Studio root `overrides[@baobox/sdk]` pin caps the SDK version
+  across its workspaces; bump that pin to `0.23.0` on upgrade or a clean
+  install keeps the old version.
+
 ## 0.22.0
 
 `catalog.list()` and `tools.list()` now work on an apiKey-only client (the Skill Studio BFF).

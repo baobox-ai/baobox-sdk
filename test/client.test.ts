@@ -751,6 +751,183 @@ describe("admin and eval helpers", () => {
     expect(result.versionA.label).toBe("A");
     expect(result.versionB.label).toBe("B");
   });
+
+  it("forwards modelOverride on eval.run and drops it when omitted", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetch = fakeFetch((_url, init) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return jsonResponse(200, {
+        data: {
+          evalRunId: "run_1",
+          status: "completed",
+          totalCases: 1,
+          passed: 1,
+          failed: 0,
+          avgScore: 4,
+          results: [],
+          durationMs: 12,
+        },
+        metadata: { requestId: "r_run", latencyMs: 12 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const run = await bb.eval.run({ skillId: "sk_1", modelOverride: "provider/model-x" });
+    expect(bodies[0]).toEqual({ skillId: "sk_1", modelOverride: "provider/model-x" });
+    expect(run.runId).toBe("run_1");
+
+    await bb.eval.run({ skillId: "sk_1" });
+    // compactObject must drop the absent override entirely.
+    expect(bodies[1]).not.toHaveProperty("modelOverride");
+    expect(bodies[1]).toEqual({ skillId: "sk_1" });
+  });
+
+  it("forwards T8/T9 case fields and maps them back; null clears, undefined drops", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetch = fakeFetch((_url, init) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return jsonResponse(201, {
+        data: {
+          evalCaseId: "case_1",
+          skillId: "sk_1",
+          name: "captured",
+          input: "in",
+          expectedBehavior: "behaves",
+          expectedOutput: "exact text",
+          dimensions: "accuracy",
+          passingThreshold: 3,
+          sourceSessionId: "sess_1",
+          matchMode: "exact",
+          createdAt: "2026-06-27T00:00:00Z",
+          updatedAt: "2026-06-27T00:00:00Z",
+        },
+        metadata: { requestId: "r_case", latencyMs: 0 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const created = await bb.eval.tests.create("sk_1", {
+      name: "captured",
+      input: "in",
+      expectedBehavior: "behaves",
+      matchMode: "exact",
+      expectedOutput: "exact text",
+      sourceSessionId: "sess_1",
+    });
+    expect(bodies[0]).toEqual({
+      name: "captured",
+      input: "in",
+      expectedBehavior: "behaves",
+      matchMode: "exact",
+      expectedOutput: "exact text",
+      sourceSessionId: "sess_1",
+    });
+    expect(created.matchMode).toBe("exact");
+    expect(created.expectedOutput).toBe("exact text");
+    expect(created.sourceSessionId).toBe("sess_1");
+
+    // null is preserved (clear); the omitted matchMode is dropped.
+    await bb.eval.tests.create("sk_1", {
+      name: "judge case",
+      input: "in",
+      expectedBehavior: "behaves",
+      expectedOutput: null,
+    });
+    expect(bodies[1]).toEqual({
+      name: "judge case",
+      input: "in",
+      expectedBehavior: "behaves",
+      expectedOutput: null,
+    });
+    expect(bodies[1]).not.toHaveProperty("matchMode");
+    expect(bodies[1]).not.toHaveProperty("sourceSessionId");
+  });
+
+  it("tolerates older backends that omit the new EvalCase fields", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: [
+          {
+            evalCaseId: "case_legacy",
+            skillId: "sk_1",
+            name: "legacy",
+            input: "in",
+            expectedBehavior: "behaves",
+            dimensions: "accuracy",
+            passingThreshold: 3,
+            createdAt: "2026-06-27T00:00:00Z",
+            updatedAt: "2026-06-27T00:00:00Z",
+          },
+        ],
+        metadata: { requestId: "r_list", latencyMs: 0 },
+      }),
+    );
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+    const cases = await bb.eval.tests.list("sk_1");
+    const c = cases[0]!;
+    expect(c.matchMode).toBe("judge");
+    expect(c.expectedOutput).toBeNull();
+    expect(c.sourceSessionId).toBeNull();
+  });
+
+  it("eval.draftFromEvent posts the event id and assist flag, maps the draft", async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    const fetch = fakeFetch((url, init) => {
+      calls.push({ url, body: JSON.parse(String(init.body)) });
+      return jsonResponse(200, {
+        data: {
+          skillId: "sk_1",
+          sourceSessionId: "sess_1",
+          suggestedName: "Draft from turn",
+          input: "user input",
+          referenceOutput: "assistant output",
+          fullMessages: [{ role: "user", content: "user input" }],
+          llmContext: { model: "provider/model-x", tokenCount: 42, latencyMs: 100 },
+          suggestedMatchMode: "judge",
+          assist: {
+            copyablePrompt: "Write a test that...",
+            assisted: true,
+            suggested: {
+              name: "Refined name",
+              expectedBehavior: "behaves well",
+              dimensions: ["accuracy"],
+            },
+          },
+        },
+        metadata: { requestId: "r_draft", latencyMs: 0 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const draft = await bb.eval.draftFromEvent("evt_1", { assist: true });
+    expect(calls[0]!.url).toBe("https://api.example.com/api/v1/eval/draft-from-event");
+    expect(calls[0]!.body).toEqual({ eventId: "evt_1", assist: true });
+    expect(draft.skillId).toBe("sk_1");
+    expect(draft.referenceOutput).toBe("assistant output");
+    expect(draft.suggestedMatchMode).toBe("judge");
+    expect(draft.llmContext.tokenCount).toBe(42);
+    expect(draft.assist?.suggested?.name).toBe("Refined name");
+
+    // assist omitted → compactObject drops it.
+    await bb.eval.draftFromEvent("evt_2");
+    expect(calls[1]!.body).toEqual({ eventId: "evt_2" });
+  });
 });
 
 describe("workflow", () => {

@@ -664,14 +664,35 @@ export type UpdateScheduledTaskRequest = {
 
 // --- Eval ---
 
+/**
+ * How a saved eval case is scored (T8, #288). `"judge"` is the default
+ * LLM-as-judge behaviour (unchanged). `"exact"` / `"contains"` compare the
+ * skill's response against `expectedOutput` deterministically (consumed by the
+ * T9 scorer). Mirrors the backend `eval_test_cases.match_mode` column.
+ */
+export type EvalMatchMode = "judge" | "exact" | "contains";
+
 export type EvalCase = {
   id: string;
   skillId: string;
   name: string;
   input: string;
   expectedBehavior: string;
+  /**
+   * Literal reference output for deterministic (`exact`/`contains`) scoring
+   * (T9). `null` for judge cases. Mirrors `eval_test_cases.expected_output`.
+   */
+  expectedOutput: string | null;
   dimensions: string;
   passingThreshold: number;
+  /**
+   * Session this case was captured from, when promoted from a captured run
+   * (T8). `null` for hand-authored cases. Mirrors
+   * `eval_test_cases.source_session_id`.
+   */
+  sourceSessionId: string | null;
+  /** How the case is scored. See `EvalMatchMode`. Defaults to `"judge"`. */
+  matchMode: EvalMatchMode;
   createdAt: string;
   updatedAt: string;
 };
@@ -682,12 +703,94 @@ export type CreateEvalCaseRequest = {
   expectedBehavior: string;
   dimensions?: string[];
   passingThreshold?: number;
+  /**
+   * Literal expected output for deterministic (`exact`/`contains`) cases (T9).
+   * Optional — judge cases omit it. Pass `null` to clear an existing value.
+   */
+  expectedOutput?: string | null;
+  /**
+   * Capture provenance — the session this case was promoted from (T8).
+   * Optional. Omit for hand-authored cases.
+   */
+  sourceSessionId?: string | null;
+  /**
+   * Comparison mode for scoring (T8). Optional — omit to let the server apply
+   * its default (`"judge"`).
+   */
+  matchMode?: EvalMatchMode;
 };
 
 export type RunEvalRequest = {
   skillId: string;
   testCaseIds?: string[];
   promptVersion?: string;
+  /**
+   * Optional model override for the run (T9, absorbs #288 §D). When set it
+   * wins over the skill/integration default model and is recorded into
+   * `EvalRun.metadata.model` so two runs are comparable. Omit to use the
+   * resolved default.
+   */
+  modelOverride?: string;
+};
+
+// --- Draft-from-event (T8) ---
+//
+// Resolve a captured `llm_call` (by either half's event id) into a DRAFT eval
+// case via `POST /api/v1/eval/draft-from-event`. The draft is HTTP-only —
+// NOTHING is persisted. Use the returned fields to prefill a create-case call.
+// Admin-secret gated; admin is trusted so any event is resolvable.
+
+/**
+ * Options for `client.eval.draftFromEvent()`.
+ */
+export type DraftFromEventOptions = {
+  /**
+   * When `true` the server also consults the meta-LLM for a refined draft
+   * (populating `assist.suggested`). The copyable assist prompt is returned
+   * regardless. Optional — defaults to `false` server-side.
+   */
+  assist?: boolean;
+};
+
+/**
+ * LLM context captured alongside the source turn.
+ */
+export type DraftFromEventLlmContext = {
+  model: string | null;
+  tokenCount: number;
+  latencyMs: number | null;
+};
+
+/**
+ * Meta-LLM assist payload, present on the draft when `assist: true` was
+ * requested. `copyablePrompt` always works (no-LLM fallback); `suggested` is
+ * populated only when the meta-LLM ran successfully.
+ */
+export type DraftFromEventAssist = {
+  copyablePrompt: string;
+  assisted: boolean;
+  suggested?: {
+    name: string;
+    expectedBehavior: string;
+    dimensions: string[];
+  };
+};
+
+/**
+ * A DRAFT eval case derived from a captured LLM call. Nothing is persisted —
+ * use these fields to prefill a `client.eval.tests.create()` call.
+ */
+export type DraftFromEvent = {
+  skillId: string;
+  sourceSessionId: string | null;
+  suggestedName: string;
+  input: string;
+  referenceOutput: string;
+  fullMessages: { role: string; content: unknown }[];
+  llmContext: DraftFromEventLlmContext;
+  suggestedMatchMode: EvalMatchMode;
+  /** Present when `assist: true` was requested. See `DraftFromEventAssist`. */
+  assist?: DraftFromEventAssist;
 };
 
 export type EvalRunResultSummary = {

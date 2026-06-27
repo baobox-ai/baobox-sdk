@@ -36,11 +36,14 @@ import type {
   DeleteResult,
   DetachSkillResult,
   DetachToolResult,
+  DraftFromEvent,
+  DraftFromEventOptions,
   EvalCase,
   EvalCompare,
   EvalCompareRequest,
   EvalFailureRow,
   EvalFailuresRequest,
+  EvalMatchMode,
   EvalRunExecution,
   EvalRunResult,
   EvalRunResultSummary,
@@ -265,10 +268,40 @@ type RawEvalCase = {
   name: string;
   input: string;
   expectedBehavior: string;
+  /** T9 — literal reference output; null for judge cases. */
+  expectedOutput: string | null;
   dimensions: string;
   passingThreshold: number;
+  /** T8 — capture provenance; null for hand-authored cases. */
+  sourceSessionId: string | null;
+  /** T8 — comparison mode. Server defaults to "judge". */
+  matchMode: EvalMatchMode;
   createdAt: string;
   updatedAt: string;
+};
+
+type RawDraftFromEvent = {
+  skillId: string;
+  sourceSessionId: string | null;
+  suggestedName: string;
+  input: string;
+  referenceOutput: string;
+  fullMessages: { role: string; content: unknown }[];
+  llmContext: {
+    model: string | null;
+    tokenCount: number;
+    latencyMs: number | null;
+  };
+  suggestedMatchMode: EvalMatchMode;
+  assist?: {
+    copyablePrompt: string;
+    assisted: boolean;
+    suggested?: {
+      name: string;
+      expectedBehavior: string;
+      dimensions: string[];
+    };
+  };
 };
 
 type RawEvalRunExecution = {
@@ -591,6 +624,12 @@ export class BaoBoxClient {
     stats: (req?: EvalStatsRequest) => Promise<EvalStats>;
     failures: (req?: EvalFailuresRequest) => Promise<EvalFailureRow[]>;
     compare: (req: EvalCompareRequest) => Promise<EvalCompare>;
+    /**
+     * Resolve a captured `llm_call` event into a DRAFT eval case (T8). Nothing
+     * is persisted — use the returned fields to prefill `eval.tests.create()`.
+     * Pass `{ assist: true }` to also get a meta-LLM-refined suggestion.
+     */
+    draftFromEvent: (eventId: string, opts?: DraftFromEventOptions) => Promise<DraftFromEvent>;
   };
   public readonly events: {
     list: (req: EventListRequest) => Promise<Event[]>;
@@ -776,6 +815,7 @@ export class BaoBoxClient {
       stats: (req) => this.getEvalStats(req),
       failures: (req) => this.listEvalFailures(req),
       compare: (req) => this.compareEvalVersions(req),
+      draftFromEvent: (eventId, opts) => this.draftEvalFromEvent(eventId, opts),
     };
 
     this.events = {
@@ -1652,6 +1692,13 @@ export class BaoBoxClient {
         expectedBehavior: req.expectedBehavior,
         dimensions: req.dimensions,
         passingThreshold: req.passingThreshold,
+        // T8/T9 — capture provenance + comparison mode + reference output.
+        // `null` is preserved (not stripped) so an explicit clear reaches the
+        // server; `undefined` is dropped by compactObject so the server applies
+        // its defaults (matchMode → "judge", sourceSessionId/expectedOutput → null).
+        expectedOutput: req.expectedOutput,
+        sourceSessionId: req.sourceSessionId,
+        matchMode: req.matchMode,
       }),
     );
     return mapEvalCase(body.data);
@@ -1670,8 +1717,28 @@ export class BaoBoxClient {
       skillId: req.skillId,
       testCaseIds: req.testCaseIds,
       promptVersion: req.promptVersion,
+      // T9 (#288 §D) — model override; recorded into EvalRun.metadata.model.
+      modelOverride: req.modelOverride,
     }));
     return mapEvalRunExecution(body.data);
+  }
+
+  // T8 — resolve a captured llm_call event into a DRAFT eval case via
+  // POST /api/v1/eval/draft-from-event (admin-secret gated). Nothing is
+  // persisted; `assist` opts into a meta-LLM-refined suggestion.
+  private async draftEvalFromEvent(
+    eventId: string,
+    opts?: DraftFromEventOptions,
+  ): Promise<DraftFromEvent> {
+    const body = await this.requestAdmin<RawDraftFromEvent>(
+      "POST",
+      "/api/v1/eval/draft-from-event",
+      compactObject({
+        eventId,
+        assist: opts?.assist,
+      }),
+    );
+    return mapDraftFromEvent(body.data);
   }
 
   private async getEvalRun(runId: string): Promise<EvalRunWithResults> {
@@ -2113,10 +2180,30 @@ function mapEvalCase(raw: RawEvalCase): EvalCase {
     name: raw.name,
     input: raw.input,
     expectedBehavior: raw.expectedBehavior,
+    // T9 — reference output; older backends omit it (treat as null).
+    expectedOutput: raw.expectedOutput ?? null,
     dimensions: raw.dimensions,
     passingThreshold: raw.passingThreshold,
+    // T8 — capture provenance + comparison mode. Older backends omit them:
+    // sourceSessionId → null; matchMode → "judge" (the server default).
+    sourceSessionId: raw.sourceSessionId ?? null,
+    matchMode: raw.matchMode ?? "judge",
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
+  };
+}
+
+function mapDraftFromEvent(raw: RawDraftFromEvent): DraftFromEvent {
+  return {
+    skillId: raw.skillId,
+    sourceSessionId: raw.sourceSessionId,
+    suggestedName: raw.suggestedName,
+    input: raw.input,
+    referenceOutput: raw.referenceOutput,
+    fullMessages: raw.fullMessages,
+    llmContext: raw.llmContext,
+    suggestedMatchMode: raw.suggestedMatchMode,
+    assist: raw.assist,
   };
 }
 
