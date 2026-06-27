@@ -682,17 +682,18 @@ export type EvalCase = {
    * Literal reference output for deterministic (`exact`/`contains`) scoring
    * (T9). `null` for judge cases. Mirrors `eval_test_cases.expected_output`.
    */
-  expectedOutput: string | null;
+  expectedOutput?: string | null;
   dimensions: string;
   passingThreshold: number;
   /**
    * Session this case was captured from, when promoted from a captured run
    * (T8). `null` for hand-authored cases. Mirrors
-   * `eval_test_cases.source_session_id`.
+   * `eval_test_cases.source_session_id`. Optional so upgrading from 0.22 stays
+   * a non-breaking (additive) type change for consumers that mock `EvalCase`.
    */
-  sourceSessionId: string | null;
-  /** How the case is scored. See `EvalMatchMode`. Defaults to `"judge"`. */
-  matchMode: EvalMatchMode;
+  sourceSessionId?: string | null;
+  /** How the case is scored. See `EvalMatchMode`. Defaults to `"judge"`. Optional for back-compat. */
+  matchMode?: EvalMatchMode;
   createdAt: string;
   updatedAt: string;
 };
