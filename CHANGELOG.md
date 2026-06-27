@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.24.0
+
+Chat identity & scope for platform memory (#368, Epic #374 Stage 1).
+
+### Added
+
+- `ChatRequest.externalUserId` — the tenant's own stable end-user id (BaoBox
+  never mints it). Buckets per-user long-term memory.
+- `ChatRequest.scope` (`{ clientId?, matterId?, taskId? }`, new `ChatScope`
+  type) — optional memory scope so concurrent contexts don't contaminate.
+- Both are camelCase, optional, and additive — `chat()` omits them from the
+  wire when undefined, so existing callers are unaffected.
+
 ## 0.23.0
 
 Surface the eval capture + replay capabilities (Epic T15) — `modelOverride` on

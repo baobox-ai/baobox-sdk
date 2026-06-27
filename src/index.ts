@@ -871,6 +871,11 @@ export class BaoBoxClient {
         skillId: req.skillId,
         message: req.message,
         sessionId: req.sessionId,
+        // S1-1 (#368) — camelCase on the wire (server prefers camel). Additive:
+        // compactObject drops them when undefined, so the body is unchanged for
+        // callers that don't pass identity/scope.
+        externalUserId: req.externalUserId,
+        scope: req.scope,
         metadata: req.metadata,
         attachments: attachmentsToWire(req.attachments),
       }),

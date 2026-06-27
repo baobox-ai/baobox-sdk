@@ -104,11 +104,29 @@ export const MAX_INLINE_BYTES = 5 * 1024 * 1024;
 
 // --- Chat ---
 
+/**
+ * S1-1 (#368) — optional memory scope. Narrows per-user long-term memory to a
+ * client / matter / task so concurrent contexts don't contaminate each other.
+ */
+export type ChatScope = {
+  clientId?: string;
+  matterId?: string;
+  taskId?: string;
+};
+
 export type ChatRequest = {
   skillId?: string;
   message: string;
   sessionId?: string;
   metadata?: JsonObject;
+  /**
+   * S1-1 (#368) — the tenant's OWN stable end-user id (BaoBox never mints it).
+   * Buckets per-user long-term memory. Optional + additive: omit for the
+   * pre-#368 anonymous/session scope.
+   */
+  externalUserId?: string;
+  /** S1-1 (#368) — optional memory scope (client / matter / task). */
+  scope?: ChatScope;
   /** Optional inbound attachments. See `client.attachments.*` for builders. */
   attachments?: AttachmentInput[];
 };
