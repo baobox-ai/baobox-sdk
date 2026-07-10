@@ -14,6 +14,7 @@ import type {
   SkillRoleModel,
   SkillRoleModelsMap,
   ReasoningEffort,
+  RefusalSurface,
   AppendedRunEvent,
   AppendRunEventRequest,
   AttachmentInput,
@@ -29,6 +30,7 @@ import type {
   ChatRequest,
   ChatResponse,
   ChatStreamRequest,
+  ContentBlock,
   SseEvent,
   CreateApiKeyRequest,
   CreateEvalCaseRequest,
@@ -105,6 +107,12 @@ type AuthMode = "none" | "apiKey" | "adminSecret";
 type ApiEnvelope<T> = {
   data: T;
   meta: ResponseMeta;
+  // B1 (epic #170 §3.7): present only on a guardrail-refusal 200 frame — see
+  // `RawMetadata.refusal_surface` and `errorHandler` in baobox's
+  // src/middleware/error-handler.ts. Not part of `ResponseMeta` because most
+  // callers of `request()` never refuse (health, admin, skills, ...); only
+  // `chat()`/`workflow()` read it.
+  refusalSurface?: RefusalSurface;
 };
 
 // 0.8.0: every renamed field on the public-SDK wire (request/latency/trace)
@@ -117,6 +125,9 @@ type RawMetadata = {
   latencyMs?: number;
   latency_ms?: number;
   model?: string;
+  // B1 (epic #170 §3.7) — snake_case only on the wire (see error-handler.ts);
+  // not part of the Phase-1/3 camelCase migration, it's a new field.
+  refusal_surface?: RefusalSurface;
   trace?: Array<{
     toolName?: string;
     tool_name?: string;
@@ -856,7 +867,9 @@ export class BaoBoxClient {
     // a future Phase-3 server that emits camelCase only.
     const body = await this.requestApi<{
       response: string;
-      usage: {
+      // B1 (epic #170 §3.7): a guardrail-refused turn is a 200 whose `data`
+      // deliberately omits `usage` — see the refusalSurface handling below.
+      usage?: {
         inputTokens?: number;
         input_tokens?: number;
         outputTokens?: number;
@@ -864,6 +877,7 @@ export class BaoBoxClient {
       };
       sessionId?: string;
       session_id?: string;
+      blocks?: ContentBlock[];
     }>(
       "POST",
       "/api/v1/chat",
@@ -881,7 +895,12 @@ export class BaoBoxClient {
       }),
     );
 
-    const usage = body.data.usage;
+    // B1 (epic #170 §3.7): a guardrail block is not an error — the server
+    // answers 200 with a single refusal frame that omits `usage` entirely
+    // (see baobox/src/middleware/error-handler.ts). Default to zeros rather
+    // than throwing so a refused turn round-trips like any other response;
+    // callers branch on `refusalSurface`/`blocks`, not on a crash.
+    const usage = body.data.usage ?? {};
     return {
       response: body.data.response,
       usage: {
@@ -889,6 +908,8 @@ export class BaoBoxClient {
         outputTokens: usage.outputTokens ?? usage.output_tokens ?? 0,
       },
       sessionId: body.data.sessionId ?? body.data.session_id,
+      blocks: body.data.blocks,
+      refusalSurface: body.refusalSurface,
       meta: body.meta,
     };
   }
@@ -904,12 +925,15 @@ export class BaoBoxClient {
       output?: TOutput;
       runId?: string;
       run_id?: string;
-      usage: {
+      // B1 (epic #170 §3.7): a guardrail-refused turn is a 200 whose `data`
+      // deliberately omits `usage` — see the refusalSurface handling below.
+      usage?: {
         inputTokens?: number;
         input_tokens?: number;
         outputTokens?: number;
         output_tokens?: number;
       };
+      blocks?: ContentBlock[];
     }>(
       "POST",
       "/api/v1/workflow",
@@ -924,7 +948,13 @@ export class BaoBoxClient {
       }),
     );
 
-    const usage = body.data.usage;
+    // B1 (epic #170 §3.7): a guardrail block is not an error — the server
+    // answers 200 with a single refusal frame that omits `usage` (and
+    // `runId`) entirely (see baobox/src/middleware/error-handler.ts).
+    // Default to zeros rather than throwing so a refused turn round-trips
+    // like any other response; callers branch on `refusalSurface`/`blocks`,
+    // not on a crash. `workflowStructured()` gives refusals a typed error.
+    const usage = body.data.usage ?? {};
     return {
       response: body.data.response,
       output: body.data.output,
@@ -933,6 +963,8 @@ export class BaoBoxClient {
         inputTokens: usage.inputTokens ?? usage.input_tokens ?? 0,
         outputTokens: usage.outputTokens ?? usage.output_tokens ?? 0,
       },
+      blocks: body.data.blocks,
+      refusalSurface: body.refusalSurface,
       meta: body.meta,
     };
   }
@@ -942,6 +974,20 @@ export class BaoBoxClient {
   ): Promise<WorkflowResponse<TOutput> & { output: TOutput }> {
     const response = await this.workflow<TOutput>(req);
     if (response.output === undefined) {
+      // B1 (epic #170 §3.7): a refusal frame never carries structured
+      // `output` — that's the platform declining the turn, not a malformed
+      // response. Give it a typed, distinguishable error code (`REFUSED`)
+      // instead of lumping it in with `INVALID_RESPONSE` (a model that
+      // ignored `outputSchema`), so callers can tell the two apart.
+      if (response.refusalSurface) {
+        throw new BaoBoxError(
+          200,
+          "REFUSED",
+          response.response,
+          response.meta.requestId,
+          { blocks: response.blocks, refusalSurface: response.refusalSurface },
+        );
+      }
       throw new BaoBoxError(
         0,
         "INVALID_RESPONSE",
@@ -1990,6 +2036,7 @@ export class BaoBoxClient {
     return {
       data: envelope.data,
       meta: mapResponseMeta(envelope.metadata),
+      refusalSurface: envelope.metadata?.refusal_surface,
     };
   }
 
