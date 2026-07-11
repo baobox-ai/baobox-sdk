@@ -2299,6 +2299,126 @@ describe("admin.skills.setGuardrailDisabled (B1)", () => {
   });
 });
 
+// ─── #306 — admin guard-selection surface ──────────────────────────────────
+describe("admin.skills.setGuardSelection (#306)", () => {
+  it("PATCHes the admin guard-selection route with both FKs and bearer auth", async () => {
+    const seen: { url?: string; method?: string; body?: unknown; auth?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      seen.body = JSON.parse(String(init.body));
+      seen.auth = (init.headers as Record<string, string>).authorization;
+      return jsonResponse(200, {
+        data: {
+          skillId: "sk_demo",
+          guardrailPreflightSkillId: "sk_guard_pre_custom",
+          guardrailPostflightSkillId: "sk_guard_post_custom",
+        },
+        metadata: { requestId: "r_guard_sel", latencyMs: 4 },
+      });
+    });
+
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    const result = await bb.admin.skills.setGuardSelection("sk_demo", {
+      guardrailPreflightSkillId: "sk_guard_pre_custom",
+      guardrailPostflightSkillId: "sk_guard_post_custom",
+    });
+
+    expect(seen.method).toBe("PATCH");
+    expect(seen.url).toBe(
+      "https://api.example.com/api/v1/admin/skills/sk_demo/guard-selection",
+    );
+    expect(seen.auth).toBe("Bearer adm");
+    expect(seen.body).toEqual({
+      guardrailPreflightSkillId: "sk_guard_pre_custom",
+      guardrailPostflightSkillId: "sk_guard_post_custom",
+    });
+    expect(result).toEqual({
+      skillId: "sk_demo",
+      guardrailPreflightSkillId: "sk_guard_pre_custom",
+      guardrailPostflightSkillId: "sk_guard_post_custom",
+    });
+  });
+
+  it("URL-encodes skill ids with special characters", async () => {
+    const calls: string[] = [];
+    const fetch = fakeFetch((url) => {
+      calls.push(url);
+      return jsonResponse(200, {
+        data: {
+          skillId: "sk/weird id",
+          guardrailPreflightSkillId: null,
+          guardrailPostflightSkillId: null,
+        },
+        metadata: { requestId: "r_enc_sel", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    await bb.admin.skills.setGuardSelection("sk/weird id", {
+      guardrailPreflightSkillId: null,
+    });
+    expect(calls[0]).toBe(
+      "https://api.example.com/api/v1/admin/skills/sk%2Fweird%20id/guard-selection",
+    );
+  });
+
+  it("supports reverting a slot to the platform default by passing null", async () => {
+    let seenBody: Record<string, unknown> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return jsonResponse(200, {
+        data: {
+          skillId: "sk_demo",
+          guardrailPreflightSkillId: null,
+          guardrailPostflightSkillId: "sk_guard_post_custom",
+        },
+        metadata: { requestId: "r_clear_sel", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    await bb.admin.skills.setGuardSelection("sk_demo", {
+      guardrailPreflightSkillId: null,
+    });
+    expect(seenBody).toEqual({ guardrailPreflightSkillId: null });
+    expect("guardrailPostflightSkillId" in seenBody).toBe(false);
+  });
+
+  it("propagates 404 as BaoBoxError with skill_not_found code", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(404, {
+        error: { code: "skill_not_found", message: "Skill 'sk_missing' not found" },
+      }),
+    );
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      adminSecret: "adm",
+      fetch,
+    });
+
+    await expect(
+      bb.admin.skills.setGuardSelection("sk_missing", { guardrailPreflightSkillId: "sk_guard_pre_v2" }),
+    ).rejects.toMatchObject({
+      status: 404,
+      code: "skill_not_found",
+    });
+  });
+});
+
 // ─── D1 (0.12.0) — session metadata + actorUserId attribution ──────────────
 describe("sessions.updateMetadata (D1)", () => {
   it("PATCHes /api/v1/sessions/:id/metadata with the metadata blob", async () => {

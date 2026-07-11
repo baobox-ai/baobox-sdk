@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.26.0
+
+Expose guard-selection in `@baobox/sdk` (#306) — the last SDK gap for
+code-owned per-tenant guards (refs baobox#304).
+
+### Added
+
+- `client.admin.skills.setGuardSelection(skillId, { guardrailPreflightSkillId?, guardrailPostflightSkillId? })`
+  — admin-secret method to select WHICH guard skill runs pre-/post-flight on
+  a given skill. `null` reverts a slot to the platform-default system guard.
+  Corresponds to `PATCH /api/v1/admin/skills/:id/guard-selection`. Distinct
+  from `skills.updateGuardrails`/`admin.skills.setGuardrailDisabled`, which
+  configure addenda/kill-switches on the currently-selected guard rather than
+  choosing which guard is selected.
+- New types: `SkillGuardSelectionUpdateRequest`, `SkillGuardSelectionUpdateResult`.
+
 ## 0.25.0
 
 Fix `workflow()`/`chat()` crashing on the platform's own guardrail refusal
