@@ -74,6 +74,8 @@ import type {
   SkillFileSummary,
   SkillGuardrailUpdateRequest,
   SkillGuardrailUpdateResult,
+  SkillGuardSelectionUpdateRequest,
+  SkillGuardSelectionUpdateResult,
   SkillImportRequest,
   SkillScopeOptions,
   SkillSecretSummary,
@@ -464,6 +466,18 @@ export class BaoBoxClient {
        * Corresponds to `PATCH /api/v1/admin/skills/:id/guardrails`.
        */
       setGuardrailDisabled: (skillId: string, req: AdminSkillGuardrailUpdateRequest) => Promise<AdminSkillGuardrailUpdateResult>;
+      /**
+       * Select which guard skill runs pre-/post-flight on any skill (#306,
+       * admin-only). Distinct from `setGuardrailDisabled`/`skills.updateGuardrails`,
+       * which configure addenda/kill-switches on the currently-selected guard —
+       * this picks WHICH guard skill is selected. `null` reverts a slot to the
+       * platform-default system guard.
+       * Corresponds to `PATCH /api/v1/admin/skills/:id/guard-selection`.
+       */
+      setGuardSelection: (
+        skillId: string,
+        req: SkillGuardSelectionUpdateRequest,
+      ) => Promise<SkillGuardSelectionUpdateResult>;
     };
     tools: {
       upsert: (req: ToolUpsertRequest) => Promise<Tool>;
@@ -740,6 +754,7 @@ export class BaoBoxClient {
       skills: {
         upsert: (req) => this.saveSkill(req),
         setGuardrailDisabled: (id, req) => this.setAdminSkillGuardrails(id, req),
+        setGuardSelection: (id, req) => this.setAdminSkillGuardSelection(id, req),
       },
       tools: {
         upsert: (req) => this.createTool(req),
@@ -1368,6 +1383,26 @@ export class BaoBoxClient {
       postflightAddendum: body.data.postflightAddendum,
       isSystem: body.data.isSystem,
     };
+  }
+
+  // #306 — admin-only: select which guard skill runs pre-/post-flight on any
+  // skill (distinct from the addenda/kill-switch surface above). Corresponds
+  // to `PATCH /api/v1/admin/skills/:id/guard-selection`. The response shape
+  // already matches `SkillGuardSelectionUpdateResult` field-for-field (no
+  // numeric flag conversion needed), so no `Raw*` mapping type is required.
+  private async setAdminSkillGuardSelection(
+    skillId: string,
+    req: SkillGuardSelectionUpdateRequest,
+  ): Promise<SkillGuardSelectionUpdateResult> {
+    const body = await this.requestAdmin<SkillGuardSelectionUpdateResult>(
+      "PATCH",
+      `/api/v1/admin/skills/${encodeURIComponent(skillId)}/guard-selection`,
+      compactObject({
+        guardrailPreflightSkillId: req.guardrailPreflightSkillId,
+        guardrailPostflightSkillId: req.guardrailPostflightSkillId,
+      }),
+    );
+    return body.data;
   }
 
   private async listSkillFiles(skillId: string): Promise<SkillFileSummary[]> {

@@ -418,6 +418,27 @@ export type AdminSkillGuardrailUpdateResult = {
   isSystem: number;
 };
 
+/**
+ * Request body for `client.admin.skills.setGuardSelection()` (admin-only
+ * path, #306). Selects WHICH guard skill runs the pre-/post-flight check on
+ * the target skill — distinct from `updateGuardrails`/`setGuardrailDisabled`,
+ * which configure the addenda and kill-switches on whichever guard is
+ * currently selected. `null` reverts the slot to the platform-default system
+ * guard.
+ */
+export type SkillGuardSelectionUpdateRequest = {
+  /** Guard skill id to run pre-flight. `null` reverts to the platform default. */
+  guardrailPreflightSkillId?: string | null;
+  /** Guard skill id to run post-flight. `null` reverts to the platform default. */
+  guardrailPostflightSkillId?: string | null;
+};
+
+export type SkillGuardSelectionUpdateResult = {
+  skillId: string;
+  guardrailPreflightSkillId: string | null;
+  guardrailPostflightSkillId: string | null;
+};
+
 // --- Skills ---
 
 export type SkillFileInput = {
