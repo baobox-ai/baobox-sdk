@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.25.0
+
+Fix `workflow()`/`chat()` crashing on the platform's own guardrail refusal
+frame (#426, gap found during #402/#405 verification).
+
+### Fixed
+
+- Since B1 (epic #170 §3.7), a guardrail block is not an error — the server
+  answers HTTP 200 with a single refusal frame that deliberately omits
+  `usage`. `workflow()`/`chat()` assumed `usage` always existed and threw a
+  raw `TypeError` on that frame, crashing any caller whose input tripped a
+  guardrail. Both now default missing `usage` to zeros instead of throwing.
+
+### Added
+
+- `ChatResponse`/`WorkflowResponse` gain optional `blocks?: ContentBlock[]`
+  and `refusalSurface?: "preflight" | "postflight"` so callers can detect and
+  render a refusal (`blocks[0].type === "refusal"`) without string-sniffing
+  `response`. Both are `undefined` on a normal turn.
+- `RefusalSurface` type, exported alongside the existing `RefusalBlock`.
+- `workflowStructured()`: a refusal frame never carries `output` — now throws
+  a typed `BaoBoxError` with code `REFUSED` (carrying `blocks`/
+  `refusalSurface` in `body`) instead of the generic `INVALID_RESPONSE`, so
+  callers can distinguish "the platform refused this turn" from "the model
+  ignored `outputSchema`".
+
 ## 0.24.0
 
 Chat identity & scope for platform memory (#368, Epic #374 Stage 1).

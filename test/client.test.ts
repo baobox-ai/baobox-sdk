@@ -1114,6 +1114,93 @@ describe("workflow", () => {
   });
 });
 
+// #426 — B1 (epic #170 §3.7): a guardrail block is not an error. The server
+// answers HTTP 200 with a single refusal frame (`blocks: [{type:"refusal"}]`,
+// `metadata.refusal_surface`) that deliberately omits `usage` — see
+// baobox/src/middleware/error-handler.ts. Before this fix, `chat()`/
+// `workflow()` assumed `usage` always existed and threw a raw TypeError on
+// this frame, crashing any caller whose input tripped a guardrail (repro:
+// baobox-e2e test/e2e/reply-skills.test.ts leg 3a).
+function refusalEnvelope(surface: "preflight" | "postflight", requestId: string) {
+  const reason = "This request cannot be completed under the configured content policy.";
+  return {
+    data: {
+      role: "assistant",
+      content: reason,
+      blocks: [{ type: "refusal", reason }],
+      response: reason,
+    },
+    metadata: {
+      refusal_surface: surface,
+      request_id: requestId,
+      latency_ms: 0,
+    },
+  };
+}
+
+describe("guardrail refusal frame (#426)", () => {
+  it("chat() surfaces a preflight refusal instead of throwing", async () => {
+    const fetch = fakeFetch(() => jsonResponse(200, refusalEnvelope("preflight", "r_refuse_1")));
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+
+    const r = await bb.chat({ message: "do something disallowed" });
+
+    expect(r.refusalSurface).toBe("preflight");
+    expect(r.blocks).toEqual([
+      { type: "refusal", reason: "This request cannot be completed under the configured content policy." },
+    ]);
+    expect(r.response).toBe("This request cannot be completed under the configured content policy.");
+    // no `usage` on the wire — defaults to zeros rather than throwing.
+    expect(r.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+    expect(r.meta.requestId).toBe("r_refuse_1");
+  });
+
+  it("workflow() surfaces a postflight refusal instead of throwing", async () => {
+    const fetch = fakeFetch(() => jsonResponse(200, refusalEnvelope("postflight", "r_refuse_2")));
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+
+    const r = await bb.workflow({
+      skill: "sk_reply_skill",
+      clientId: "c",
+      requestId: "rq",
+      input: "reply to this thread",
+    });
+
+    expect(r.refusalSurface).toBe("postflight");
+    expect(r.blocks).toEqual([
+      { type: "refusal", reason: "This request cannot be completed under the configured content policy." },
+    ]);
+    expect(r.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+    expect(r.meta.requestId).toBe("r_refuse_2");
+  });
+
+  it("workflowStructured() throws a typed REFUSED error (not INVALID_RESPONSE) on a refusal frame", async () => {
+    const fetch = fakeFetch(() => jsonResponse(200, refusalEnvelope("postflight", "r_refuse_3")));
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+
+    try {
+      await bb.workflowStructured<{ status: string }>({
+        skill: "sk_reply_skill",
+        clientId: "c",
+        requestId: "rq",
+        input: "reply to this thread",
+        outputSchema: {
+          type: "object",
+          required: ["status"],
+          properties: { status: { type: "string" } },
+        },
+      });
+      throw new Error("expected BaoBoxError");
+    } catch (err) {
+      const e = err as BaoBoxError;
+      expect(e).toBeInstanceOf(BaoBoxError);
+      expect(e.code).toBe("REFUSED");
+      expect(e.code).not.toBe("INVALID_RESPONSE");
+      expect(e.requestId).toBe("r_refuse_3");
+    }
+  });
+});
+
 // 0.8.0 — server-side migration ships dual-emit (camelCase + snake_case)
 // during the Phase-1 deprecation window. The SDK must keep parsing every
 // shape it could meet in the wild: legacy snake-only (pre-Phase-1 server),
