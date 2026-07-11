@@ -135,6 +135,16 @@ export type ChatResponse = {
   response: string;
   usage: { inputTokens: number; outputTokens: number };
   sessionId?: string;
+  /**
+   * B1 (epic #170 §3.7): a guardrail block is not an error — the server
+   * answers 200 with a single refusal frame instead of throwing. Present
+   * only on a refused turn; check this (or `blocks`) rather than
+   * string-sniffing `response` to detect a refusal. See `RefusalBlock`.
+   */
+  refusalSurface?: RefusalSurface;
+  /** Content blocks for the turn. Today only populated with a single
+   * `RefusalBlock` when `refusalSurface` is set. */
+  blocks?: ContentBlock[];
   meta: ResponseMeta;
 };
 
@@ -175,9 +185,20 @@ export type WorkflowResponse<TOutput = unknown> = {
   response: string;
   /** Present when `outputSchema` was supplied and BaoBox validated structured output. */
   output?: TOutput;
-  /** BaoBox-generated run id (`wflow_…`). Use this to fetch the trace. */
+  /** BaoBox-generated run id (`wflow_…`). Use this to fetch the trace. Absent
+   * on a refusal frame — see `refusalSurface`. */
   runId: string;
   usage: { inputTokens: number; outputTokens: number };
+  /**
+   * B1 (epic #170 §3.7): a guardrail block is not an error — the server
+   * answers 200 with a single refusal frame instead of throwing. Present
+   * only on a refused turn; check this (or `blocks`) rather than
+   * string-sniffing `response` to detect a refusal. See `RefusalBlock`.
+   */
+  refusalSurface?: RefusalSurface;
+  /** Content blocks for the turn. Today only populated with a single
+   * `RefusalBlock` when `refusalSurface` is set. */
+  blocks?: ContentBlock[];
   meta: ResponseMeta;
 };
 
@@ -973,6 +994,12 @@ export type RefusalBlock = {
   type: "refusal";
   reason: string;
 };
+
+// B1 (epic #170 §3.7): which sandwich-guardrail pass produced the refusal —
+// the input-side check ("preflight") or the output-side check on the model's
+// draft reply ("postflight"). Shared by the SSE `refusal` event and the
+// non-streaming `chat()`/`workflow()` refusal-frame surface.
+export type RefusalSurface = "preflight" | "postflight";
 
 export type ThinkingBlock = {
   type: "thinking";
