@@ -335,8 +335,8 @@ Multi-tenant session creation (#239).
   tenantId })` now binds the new session to a tenant. The SDK sends it as
   the `tenantId` body field; the server stores it on the session and echoes
   it back on `Session.tenantId`. Previously the SDK dropped all tenant
-  information on create, forcing multi-tenant consumers (e.g. NexionOps) to
-  bypass the SDK with raw `fetch()` calls and hand-roll the
+  information on create, forcing multi-tenant consumers to bypass the SDK
+  with raw `fetch()` calls and hand-roll the
   `X-BaoBox-Tenant-Id` header — which also exposed them to the raw JSON wire
   shape the SDK normally normalises.
 - Unit tests asserting the `tenantId` body field is sent when supplied,

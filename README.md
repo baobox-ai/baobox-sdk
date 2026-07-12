@@ -536,13 +536,13 @@ Append-event is the lightweight way to make a run's trace tell the full story: B
 ```typescript
 const result = await bb.tools.invoke({
   tool: "send_email",
-  tenantId: "firm_yongxin",
+  tenantId: "firm_acme",
   inputs: {
     to: "client@example.com",
     subject: "Documents required",
     body: "Hi — please send the BAS workpapers when you get a chance.",
-    replyTo: "yongxin_ops@inbound.tenant.nexionops.com",
-    headers: { "X-NexionOps-Request-Id": "req_abc" },
+    replyTo: "ops@inbound.tenant.example.com",
+    headers: { "X-Acme-Request-Id": "req_abc" },
   },
 });
 //   result.toolCallId = "tcl_..."        — audit-row identifier
@@ -615,4 +615,3 @@ MIT. See [LICENSE](./LICENSE).
 ## Related
 
 - [BaoBox](https://baobox.ai) — product homepage
-- [Adoptive Co](https://adoptive.co) — consultancy using BaoBox as a delivery tool
