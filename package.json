@@ -1,6 +1,6 @@
 {
   "name": "@baobox/sdk",
-  "version": "0.26.0",
+  "version": "0.26.1",
   "description": "TypeScript HTTP client for BaoBox — agent runtime + eval + observability.",
   "license": "MIT",
   "author": "BaoBox Maintainers <opensource@baobox.ai>",

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.26.1
+
+docs: genericize example identifiers in README/comments; chore: update
+package author metadata to BaoBox Maintainers. No API or runtime change
+(patch republish to refresh public npm metadata).
+
 ## 0.26.0
 
 Expose guard-selection in `@baobox/sdk` (#306) — the last SDK gap for
