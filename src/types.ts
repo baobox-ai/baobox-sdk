@@ -1,7 +1,7 @@
 export type JsonObject = Record<string, unknown>;
 
 export type BaoBoxClientOptions = {
-  /** Full URL to the BaoBox worker, e.g. "https://baobox-nexionops.<subdomain>.workers.dev" */
+  /** Full URL to the BaoBox worker, e.g. "https://baobox-acme.example.workers.dev" */
   endpoint: string;
   /** API key issued by BaoBox admin. Required for `/api/v1/chat`. */
   apiKey?: string;

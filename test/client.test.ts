@@ -956,7 +956,7 @@ describe("workflow", () => {
     const r = await bb.workflow({
       skill: "sk_email_chase",
       clientId: "client_abc",
-      requestId: "nexionops_req_42",
+      requestId: "acme_req_42",
       input: "chase client for missing bank statements",
       history: [
         { role: "user", content: "draft an email" },
@@ -969,7 +969,7 @@ describe("workflow", () => {
     expect(seen.body).toEqual({
       skill: "sk_email_chase",
       clientId: "client_abc",
-      requestId: "nexionops_req_42",
+      requestId: "acme_req_42",
       input: "chase client for missing bank statements",
       history: [
         { role: "user", content: "draft an email" },
