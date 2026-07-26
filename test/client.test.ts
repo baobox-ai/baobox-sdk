@@ -882,6 +882,59 @@ describe("admin and eval helpers", () => {
     expect(c.sourceSessionId).toBeNull();
   });
 
+  // #566 — eval.* is dual-auth: an apiKey-only client authenticates eval with
+  // the tenant apiKey; an adminSecret client keeps sending the admin bearer
+  // (unchanged); when both are present adminSecret wins.
+  it("eval.tests.list sends the tenant apiKey when the client has no adminSecret", async () => {
+    let seenAuth = "";
+    const fetch = fakeFetch((_url, init) => {
+      seenAuth = (init.headers as Record<string, string>).authorization ?? "";
+      return jsonResponse(200, { data: [], metadata: { requestId: "r", latencyMs: 0 } });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "skb_eval", fetch });
+    await bb.eval.tests.list("sk_1");
+    expect(seenAuth).toBe("Bearer skb_eval");
+  });
+
+  it("eval.run sends the admin bearer for an adminSecret client (unchanged)", async () => {
+    let seenAuth = "";
+    const fetch = fakeFetch((_url, init) => {
+      seenAuth = (init.headers as Record<string, string>).authorization ?? "";
+      return jsonResponse(200, {
+        data: {
+          evalRunId: "er_1",
+          status: "completed",
+          totalCases: 0,
+          passed: 0,
+          failed: 0,
+          avgScore: null,
+          results: [],
+          durationMs: 1,
+        },
+        metadata: { requestId: "r", latencyMs: 1 },
+      });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", adminSecret: "adm", fetch });
+    await bb.eval.run({ skillId: "sk_1" });
+    expect(seenAuth).toBe("Bearer adm");
+  });
+
+  it("eval prefers adminSecret over apiKey when both are present", async () => {
+    let seenAuth = "";
+    const fetch = fakeFetch((_url, init) => {
+      seenAuth = (init.headers as Record<string, string>).authorization ?? "";
+      return jsonResponse(200, { data: [], metadata: { requestId: "r", latencyMs: 0 } });
+    });
+    const bb = new BaoBoxClient({
+      endpoint: "https://api.example.com",
+      apiKey: "skb_eval",
+      adminSecret: "adm",
+      fetch,
+    });
+    await bb.eval.tests.list("sk_1");
+    expect(seenAuth).toBe("Bearer adm");
+  });
+
   it("eval.draftFromEvent posts the event id and assist flag, maps the draft", async () => {
     const calls: { url: string; body: Record<string, unknown> }[] = [];
     const fetch = fakeFetch((url, init) => {
