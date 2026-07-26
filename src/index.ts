@@ -636,6 +636,13 @@ export class BaoBoxClient {
       delete: (skillId: string, key: string) => Promise<DeleteResult>;
     };
   };
+  /**
+   * Evaluation harness (#566). Dual-auth: works with either the deployment
+   * `adminSecret` (all tenants) OR a per-tenant `apiKey` carrying `eval:read` /
+   * `eval:write` / `eval:run` grants — scoped, server-side, to skills the key
+   * owns and is allowlisted for. With a tenant key, aggregate reads
+   * (`stats` / `failures`) require a `skillId`.
+   */
   public readonly eval: {
     tests: {
       list: (skillId: string) => Promise<EvalCase[]>;
@@ -1761,7 +1768,7 @@ export class BaoBoxClient {
   }
 
   private async listEvalTests(skillId: string): Promise<EvalCase[]> {
-    const body = await this.requestAdmin<RawEvalCase[]>(
+    const body = await this.requestSkills<RawEvalCase[]>(
       "GET",
       `/api/v1/eval/skills/${encodeURIComponent(skillId)}/tests`,
     );
@@ -1769,7 +1776,7 @@ export class BaoBoxClient {
   }
 
   private async createEvalTest(skillId: string, req: CreateEvalCaseRequest): Promise<EvalCase> {
-    const body = await this.requestAdmin<RawEvalCase>(
+    const body = await this.requestSkills<RawEvalCase>(
       "POST",
       `/api/v1/eval/skills/${encodeURIComponent(skillId)}/tests`,
       compactObject({
@@ -1791,7 +1798,7 @@ export class BaoBoxClient {
   }
 
   private async deleteEvalTest(skillId: string, testId: string): Promise<DeleteResult> {
-    const body = await this.requestAdmin<DeleteResult>(
+    const body = await this.requestSkills<DeleteResult>(
       "DELETE",
       `/api/v1/eval/skills/${encodeURIComponent(skillId)}/tests/${encodeURIComponent(testId)}`,
     );
@@ -1799,7 +1806,7 @@ export class BaoBoxClient {
   }
 
   private async runEval(req: RunEvalRequest): Promise<EvalRunExecution> {
-    const body = await this.requestAdmin<RawEvalRunExecution>("POST", "/api/v1/eval/run", compactObject({
+    const body = await this.requestSkills<RawEvalRunExecution>("POST", "/api/v1/eval/run", compactObject({
       skillId: req.skillId,
       testCaseIds: req.testCaseIds,
       promptVersion: req.promptVersion,
@@ -1810,13 +1817,13 @@ export class BaoBoxClient {
   }
 
   // T8 — resolve a captured llm_call event into a DRAFT eval case via
-  // POST /api/v1/eval/draft-from-event (admin-secret gated). Nothing is
+  // POST /api/v1/eval/draft-from-event (adminSecret OR eval:write). Nothing is
   // persisted; `assist` opts into a meta-LLM-refined suggestion.
   private async draftEvalFromEvent(
     eventId: string,
     opts?: DraftFromEventOptions,
   ): Promise<DraftFromEvent> {
-    const body = await this.requestAdmin<RawDraftFromEvent>(
+    const body = await this.requestSkills<RawDraftFromEvent>(
       "POST",
       "/api/v1/eval/draft-from-event",
       compactObject({
@@ -1828,7 +1835,7 @@ export class BaoBoxClient {
   }
 
   private async getEvalRun(runId: string): Promise<EvalRunWithResults> {
-    const body = await this.requestAdmin<RawEvalRun & { results: RawEvalRunResult[] }>(
+    const body = await this.requestSkills<RawEvalRun & { results: RawEvalRunResult[] }>(
       "GET",
       `/api/v1/eval/runs/${encodeURIComponent(runId)}`,
     );
@@ -1839,7 +1846,7 @@ export class BaoBoxClient {
   }
 
   private async getEvalStats(req?: EvalStatsRequest): Promise<EvalStats> {
-    const body = await this.requestAdmin<RawEvalStats>(
+    const body = await this.requestSkills<RawEvalStats>(
       "GET",
       appendQuery("/api/v1/eval/stats", {
         skillId: req?.skillId,
@@ -1861,7 +1868,7 @@ export class BaoBoxClient {
   }
 
   private async listEvalFailures(req?: EvalFailuresRequest): Promise<EvalFailureRow[]> {
-    const body = await this.requestAdmin<EvalFailureRow[]>(
+    const body = await this.requestSkills<EvalFailureRow[]>(
       "GET",
       appendQuery("/api/v1/eval/failures", {
         skillId: req?.skillId,
@@ -1873,7 +1880,7 @@ export class BaoBoxClient {
   }
 
   private async compareEvalVersions(req: EvalCompareRequest): Promise<EvalCompare> {
-    const body = await this.requestAdmin<RawEvalCompare>(
+    const body = await this.requestSkills<RawEvalCompare>(
       "GET",
       appendQuery("/api/v1/eval/compare", {
         skillId: req.skillId,
