@@ -567,7 +567,13 @@ export class BaoBoxClient {
     /** List the tools attached to a skill, tenant-scoped. */
     listTools: (skillId: string, options?: SkillScopeOptions) => Promise<Tool[]>;
     import: (req: SkillImportRequest) => Promise<Skill>;
-    delete: (skillId: string) => Promise<DeleteResult>;
+    /**
+     * Delete a skill. Works with a tenant `apiKey` carrying `skills:delete`
+     * (#572; scoped to the key's OWN skill — deleting another tenant's or a
+     * global skill returns 404) OR the admin secret. On an adminSecret client,
+     * pass `{ tenantId }` to scope the delete to one tenant.
+     */
+    delete: (skillId: string, options?: SkillScopeOptions) => Promise<DeleteResult>;
     /**
      * Update the guardrail addenda for a skill (B1). Sets only
      * `preflightAddendum` and `postflightAddendum`. To also toggle the
@@ -579,6 +585,20 @@ export class BaoBoxClient {
      * is not reachable from this SDK because the SDK is bearer-only.
      */
     updateGuardrails: (skillId: string, req: SkillGuardrailUpdateRequest) => Promise<SkillGuardrailUpdateResult>;
+    /**
+     * Select which guard skill runs pre-/post-flight on a skill (#572; absorbs
+     * the SDK-less #306 admin route). Works with a tenant `apiKey` carrying
+     * `skills:write` — scoped to the key's OWN skill; a cross-tenant or system
+     * skill returns 404 — OR the admin secret. `null` on a slot reverts it to
+     * the platform-default system guard; an omitted field is left unchanged.
+     * On an adminSecret client, pass `{ tenantId }` to scope to one tenant.
+     * Corresponds to `PATCH /api/v1/skills/:id/guard-selection`.
+     */
+    setGuardSelection: (
+      skillId: string,
+      req: SkillGuardSelectionUpdateRequest,
+      options?: SkillScopeOptions,
+    ) => Promise<SkillGuardSelectionUpdateResult>;
     files: {
       list: (skillId: string) => Promise<SkillFileSummary[]>;
       get: (skillId: string, path: string) => Promise<SkillFile>;
@@ -795,7 +815,7 @@ export class BaoBoxClient {
       update: (id, req, options) => this.updateSkill(id, req, options),
       save: (req) => this.saveSkill(req),
       import: (req) => this.importSkill(req),
-      delete: (id) => this.deleteSkill(id),
+      delete: (id, options) => this.deleteSkill(id, options),
       attachSkill: (parentId, childId, options) =>
         this.attachSubSkillScoped(parentId, childId, options),
       detachSkill: (parentId, childId, options) =>
@@ -805,6 +825,7 @@ export class BaoBoxClient {
       detachTool: (skillId, toolId, options) => this.detachSkillToolScoped(skillId, toolId, options),
       listTools: (id, options) => this.listSkillToolsScoped(id, options),
       updateGuardrails: (id, req) => this.updateSkillGuardrails(id, req),
+      setGuardSelection: (id, req, options) => this.setSkillGuardSelectionScoped(id, req, options),
       files: {
         list: (id) => this.listSkillFiles(id),
         get: (id, path) => this.getSkillFile(id, path),
@@ -1380,10 +1401,39 @@ export class BaoBoxClient {
     return mapSkill(body.data);
   }
 
-  private async deleteSkill(skillId: string): Promise<DeleteResult> {
-    const body = await this.requestAdmin<DeleteResult>(
+  // #572 — dual-auth delete (`requestSkills`: adminSecret OR a per-tenant apiKey
+  // carrying `skills:delete`). Hits `/api/v1/skills/:id`; the worker's
+  // `skillsAuth` gate + `assertWritableParent` scope a tenant key to its OWN
+  // skill (cross-tenant/global → 404). Previously admin-secret only.
+  private async deleteSkill(skillId: string, options?: SkillScopeOptions): Promise<DeleteResult> {
+    const body = await this.requestSkills<DeleteResult>(
       "DELETE",
       `/api/v1/skills/${encodeURIComponent(skillId)}`,
+      undefined,
+      tenantScopeHeaders(options),
+    );
+    return body.data;
+  }
+
+  // #572 — dual-auth guard-selection (`requestSkills`: adminSecret OR a
+  // per-tenant apiKey carrying `skills:write`). Hits `/api/v1/skills/:id/
+  // guard-selection`; a tenant key is scoped to its OWN skill server-side
+  // (cross-tenant/system → 404). Absorbs the SDK-less #306 admin route, which
+  // stays available as `admin.skills.setGuardSelection`. The response body
+  // already matches `SkillGuardSelectionUpdateResult` field-for-field.
+  private async setSkillGuardSelectionScoped(
+    skillId: string,
+    req: SkillGuardSelectionUpdateRequest,
+    options?: SkillScopeOptions,
+  ): Promise<SkillGuardSelectionUpdateResult> {
+    const body = await this.requestSkills<SkillGuardSelectionUpdateResult>(
+      "PATCH",
+      `/api/v1/skills/${encodeURIComponent(skillId)}/guard-selection`,
+      compactObject({
+        guardrailPreflightSkillId: req.guardrailPreflightSkillId,
+        guardrailPostflightSkillId: req.guardrailPostflightSkillId,
+      }),
+      tenantScopeHeaders(options),
     );
     return body.data;
   }
