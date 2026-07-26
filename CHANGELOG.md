@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.28.0
+
+Tenant-key coverage for the remaining skill-management operations (#572) — a
+customer's CI can now retire the cross-tenant admin secret entirely.
+
+### Changed
+
+- `skills.delete(id, options?)` now uses **dual auth**: it works with a tenant
+  `apiKey` carrying the new `skills:delete` grant (scoped to the key's OWN
+  skill — deleting another tenant's or a global skill returns 404) OR the
+  `adminSecret`. Previously admin-secret only. On an adminSecret client, pass
+  `{ tenantId }` to scope the delete.
+
+### Added
+
+- `skills.setGuardSelection(id, req, options?)` — select which guard skill runs
+  pre-/post-flight on a skill, on the **apiKey track** (`skills:write`, scoped to
+  the key's own skill) OR the admin secret. Absorbs the SDK-less #306 admin route
+  (`admin.skills.setGuardSelection` remains for cross-tenant operator use).
+  `null` on a slot reverts it to the platform-default system guard; an omitted
+  field is left unchanged. Requires a BaoBox deployment with baobox#572.
+
+### Notes
+
+- `skills.list/get/create/update` and `tools.skills.*` (attach/detach/list)
+  already accepted a tenant `apiKey` (shipped in earlier releases); #572
+  completes the set with delete + guard-selection, so a customer's CI can run
+  skill management on a `skb_` key alone — no cross-tenant admin secret.
+- The Skill Studio root `overrides[@baobox/sdk]` pin caps the SDK version across
+  its workspaces; bump that pin to `^0.28.0` after 0.28.0 is published or a clean
+  install keeps the old version.
+
 ## 0.27.0
 
 Tenant-key access to the evaluation harness (#566) — `bb.eval.*` no longer
