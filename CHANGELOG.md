@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.27.0
+
+Tenant-key access to the evaluation harness (#566) — `bb.eval.*` no longer
+requires the deployment admin secret.
+
+### Changed
+
+- All `eval.*` methods (`tests.list/create/delete`, `run`, `runs.get`, `stats`,
+  `failures`, `compare`, `draftFromEvent`) now use **dual auth**: they work with
+  either the `adminSecret` (all tenants, unchanged) OR a per-tenant `apiKey`
+  carrying the new `eval:read` / `eval:write` / `eval:run` grants. The server
+  scopes a tenant key to skills it owns and is allowlisted for; aggregate reads
+  (`stats`, `failures`) require a `skillId` when called with a tenant key. This
+  unblocks running eval from CI without sharing the deployment master key.
+  Requires a BaoBox deployment with baobox#566.
+
+### Notes
+
+- The Skill Studio root `overrides[@baobox/sdk]` pin caps the SDK version across
+  its workspaces; bump that pin to `^0.27.0` after 0.27.0 is published or a clean
+  install keeps the old version.
+
 ## 0.26.1
 
 docs: genericize example identifiers in README/comments; chore: update
