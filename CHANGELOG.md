@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.29.0
+
+Tenant-key tool CRUD (#574) — closes the last admin-secret dependency in the
+skill-sync pipeline. A customer's CI can now reconcile its OWN tools on a tenant
+`skb_` key alone.
+
+### Changed
+
+- `tools.create(req, options?)` and `tools.delete(toolId, options?)` are now
+  **dual-auth** (`requestSkills`): a tenant `apiKey` carrying `tools:write` /
+  `tools:delete` acts on its OWN tools (worker scopes it — globals are immutable
+  → 403, cross-tenant → 404); the `adminSecret` behaves as before (create =
+  global, or own-tenant with `{ tenantId }`). Previously admin-secret only.
+
+### Added
+
+- `tools.update(toolId, req, options?)` — update an own-tenant tool in place
+  (`tools:write`). Lets a sync stop the delete+recreate churn that rotates tool
+  ids every run (which also breaks id-pinned `tool:<id>` allowlists). Requires a
+  BaoBox deployment with baobox#574.
+
+### Notes
+
+- Server-side (baobox#574), the per-key `tool:<id>` attach allowlist now applies
+  to PLATFORM/GLOBAL tools only — a tenant attaching its OWN tool needs no
+  allowlist entry (own-tool ids churn on every recreate). No SDK change needed;
+  documented here so integrators know own-tool attach "just works".
+- Bump the Skill Studio root `overrides[@baobox/sdk]` pin to `^0.29.0` after
+  publish or a clean install keeps the old version.
+
 ## 0.28.0
 
 Tenant-key coverage for the remaining skill-management operations (#572) — a
