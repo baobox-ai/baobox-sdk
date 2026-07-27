@@ -636,8 +636,26 @@ export class BaoBoxClient {
   public readonly tools: {
     list: () => Promise<Tool[]>;
     get: (toolId: string) => Promise<Tool>;
-    create: (req: ToolCreateRequest) => Promise<Tool>;
-    delete: (toolId: string) => Promise<DeleteResult>;
+    /**
+     * Create a tool. #574 — dual-auth: a tenant `apiKey` carrying `tools:write`
+     * creates an OWN-tenant tool (scoped by the key); the `adminSecret` creates
+     * a GLOBAL tool (or, with `{ tenantId }`, an own-tenant tool for that
+     * tenant). Globals stay admin-only.
+     */
+    create: (req: ToolCreateRequest, options?: SkillScopeOptions) => Promise<Tool>;
+    /**
+     * Update an OWN-tenant tool in place (#574; `tools:write`). Ends the
+     * delete+recreate churn that rotates tool ids each sync. Platform/global
+     * tools are immutable here (403); a cross-tenant or unknown id → 404. On an
+     * adminSecret client, pass `{ tenantId }` to name the tenant.
+     */
+    update: (toolId: string, req: ToolCreateRequest, options?: SkillScopeOptions) => Promise<Tool>;
+    /**
+     * Delete a tool. #574 — dual-auth: a tenant `apiKey` with `tools:delete`
+     * deletes its OWN tool (cross-tenant/global → 404/403); the `adminSecret`
+     * deletes any tool. On an adminSecret client, pass `{ tenantId }` to scope.
+     */
+    delete: (toolId: string, options?: SkillScopeOptions) => Promise<DeleteResult>;
     /**
      * Direct tool invocation (POST /api/v1/tools/invoke). API-key gated;
      * the key's tenant scope (if any) must match `tenantId`. The handler
@@ -841,8 +859,9 @@ export class BaoBoxClient {
     this.tools = {
       list: () => this.listTools(),
       get: (id) => this.getTool(id),
-      create: (req) => this.createTool(req),
-      delete: (id) => this.deleteTool(id),
+      create: (req, options) => this.createTool(req, options),
+      update: (id, req, options) => this.updateTool(id, req, options),
+      delete: (id, options) => this.deleteTool(id, options),
       invoke: (req) => this.invokeTool(req),
       skills: {
         list: (skillId) => this.listSkillTools(skillId),
@@ -1627,8 +1646,12 @@ export class BaoBoxClient {
     return mapTool(body.data);
   }
 
-  private async createTool(req: ToolCreateRequest): Promise<Tool> {
-    const body = await this.requestAdmin<RawTool>("POST", "/api/v1/tools", {
+  // #574 — dual-auth tool CRUD (`requestSkills`: adminSecret OR a per-tenant
+  // apiKey with tools:write/tools:delete). A tenant key acts on its OWN tools
+  // only; the worker's toolsAuth + `*ForTenant` services enforce own-tenant
+  // scope (globals immutable → 403, cross-tenant → 404). Previously admin-only.
+  private toolWriteBody(req: ToolCreateRequest): Record<string, unknown> {
+    return {
       name: req.name,
       description: req.description,
       inputSchema: req.inputSchema,
@@ -1638,14 +1661,39 @@ export class BaoBoxClient {
       // builtin/http. Undefined is dropped by JSON.stringify, so non-emit
       // callers send nothing extra.
       emitSchemaRef: req.emitSchemaRef,
-    });
+    };
+  }
+
+  private async createTool(req: ToolCreateRequest, options?: SkillScopeOptions): Promise<Tool> {
+    const body = await this.requestSkills<RawTool>(
+      "POST",
+      "/api/v1/tools",
+      this.toolWriteBody(req),
+      tenantScopeHeaders(options),
+    );
     return mapTool(body.data);
   }
 
-  private async deleteTool(toolId: string): Promise<DeleteResult> {
-    const body = await this.requestAdmin<DeleteResult>(
+  private async updateTool(
+    toolId: string,
+    req: ToolCreateRequest,
+    options?: SkillScopeOptions,
+  ): Promise<Tool> {
+    const body = await this.requestSkills<RawTool>(
+      "PUT",
+      `/api/v1/tools/${encodeURIComponent(toolId)}`,
+      this.toolWriteBody(req),
+      tenantScopeHeaders(options),
+    );
+    return mapTool(body.data);
+  }
+
+  private async deleteTool(toolId: string, options?: SkillScopeOptions): Promise<DeleteResult> {
+    const body = await this.requestSkills<DeleteResult>(
       "DELETE",
       `/api/v1/tools/${encodeURIComponent(toolId)}`,
+      undefined,
+      tenantScopeHeaders(options),
     );
     return body.data;
   }
