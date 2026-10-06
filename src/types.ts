@@ -482,6 +482,14 @@ export type SkillFileInput = {
  */
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
+/** Per-model params stored on a skill (server `llmParams`). */
+export type SkillLlmParams = {
+  reasoningEffort?: ReasoningEffort;
+};
+
+/** Where a skill's LLM credentials resolve from. */
+export type SkillLlmSource = "tenant_default" | "platform" | "pinned";
+
 export type SkillCreateRequest = {
   name: string;
   description?: string;
@@ -491,9 +499,12 @@ export type SkillCreateRequest = {
   maxTokens?: number;
   /**
    * How much reasoning compute to apply. Optional — omit to use the
-   * server-side default. See `ReasoningEffort` for the four tiers.
+   * server-side default. See `ReasoningEffort` for the tiers. On update, `null`
+   * clears a previously set value (on create it is the same as omitting it). `none` disables thinking on models that support a
+   * toggle; a tier the model does not accept is reported by the server as an
+   * ignored parameter. Sent on the wire as `llmParams.reasoningEffort`.
    */
-  reasoningEffort?: ReasoningEffort;
+  reasoningEffort?: ReasoningEffort | null;
   /**
    * Pin a specific tenant LLM integration (the model runs on that
    * integration's provider/key). `null` clears the pin → tenant default.
@@ -541,6 +552,12 @@ export type Skill = {
    * server has no explicit value set (uses its built-in default).
    */
   reasoningEffort?: ReasoningEffort | null;
+  /** Raw per-model params as stored by the server (`null` when unset). */
+  llmParams?: SkillLlmParams | null;
+  /** Pinned tenant LLM integration id, or `null` (tenant default / platform). */
+  llmIntegrationId?: string | null;
+  /** Credential source the server resolved for this skill. */
+  llmSource?: SkillLlmSource;
   sourceUrl: string | null;
   tenantId: string | null;
   createdAt: string;
@@ -1143,6 +1160,11 @@ export type LlmCatalog = {
   providers: LlmCatalogProvider[];
   /** All reasoning-effort tier strings valid across all providers. */
   reasoningEfforts: string[];
+  /**
+   * 0.30.0 — the model a skill created without `model` is stored with.
+   * Optional: absent on servers that predate the field.
+   */
+  platformDefaultModel?: string;
 };
 
 // ─── LLM integrations (0.20.0) ───────────────────────────────────────────────

@@ -1,0 +1,5 @@
+{
+  "_comment": "Synthetic list of the property names the server's create/update skill request schemas declare. Update when the server schema gains or loses a field.",
+  "create": ["name","description","systemPrompt","model","temperature","maxTokens","llmParams","llmSource","llmIntegrationId","preflightAddendum","postflightAddendum","preflightDisabled","postflightDisabled","sourceUrl","attachmentDefault","attachmentMaxCount","attachmentMaxSizeMb","fileLoadMode","files","global"],
+  "update": ["name","description","systemPrompt","model","temperature","maxTokens","llmParams","llmSource","llmIntegrationId","preflightAddendum","postflightAddendum","preflightDisabled","postflightDisabled","sourceUrl","attachmentDefault","attachmentMaxCount","attachmentMaxSizeMb","fileLoadMode","files","status"]
+}

@@ -70,6 +70,8 @@ import type {
   SetSkillSecretRequest,
   SetSkillSecretResult,
   Skill,
+  SkillLlmParams,
+  SkillLlmSource,
   SkillCreateRequest,
   SkillFile,
   SkillFileReference,
@@ -195,6 +197,12 @@ type RawSkill = {
   // 0.17.0 — reasoning effort tier. Optional: servers that predate #301
   // support omit this field; the mapper passes it through as-is.
   reasoningEffort?: ReasoningEffort | null;
+  // 0.30.0 — the server's real shape: per-model params live under `llmParams`
+  // (nullable), alongside the credential-source fields. All optional so an
+  // older server that omits them doesn't break the mapper.
+  llmParams?: SkillLlmParams | null;
+  llmIntegrationId?: string | null;
+  llmSource?: SkillLlmSource;
   sourceUrl: string | null;
   tenantId: string | null;
   // η.1 / B-3 — per-skill attachment policy. Optional on the SDK side so a
@@ -2276,7 +2284,17 @@ function mapSkill(raw: RawSkill): Skill {
     maxTokens: raw.maxTokens,
     // 0.17.0 — pass through when present; omit when the server doesn't send it
     // so consumers on older servers still get a well-typed Skill object.
-    ...("reasoningEffort" in raw ? { reasoningEffort: raw.reasoningEffort } : {}),
+    // 0.30.0 — the server returns `llmParams.reasoningEffort`; the top-level
+    // `reasoningEffort` is a forward-compat fallback only (no server has emitted it).
+    // TODO(0.31.0): drop the top-level fallback.
+    ...(raw.llmParams?.reasoningEffort !== undefined
+      ? { reasoningEffort: raw.llmParams.reasoningEffort }
+      : "reasoningEffort" in raw
+        ? { reasoningEffort: raw.reasoningEffort }
+        : {}),
+    ...("llmParams" in raw ? { llmParams: raw.llmParams } : {}),
+    ...("llmIntegrationId" in raw ? { llmIntegrationId: raw.llmIntegrationId } : {}),
+    ...("llmSource" in raw ? { llmSource: raw.llmSource } : {}),
     sourceUrl: raw.sourceUrl,
     tenantId: raw.tenantId,
     createdAt: raw.createdAt,
@@ -2479,6 +2497,11 @@ function buildSkillWriteBody(req: SkillCreateRequest | SkillUpdateRequest): Reco
   // 0.8.0: BaoBox admin surface accepts camelCase request bodies after the
   // ι epic. The previous snake_case keys are no longer recognized.
   // 0.17.0: reasoningEffort forwarded when set; compactObject drops undefined.
+  // 0.30.0: reasoningEffort is sent as `llmParams.reasoningEffort` (the only
+  // place the server reads it; a top-level key is stripped). `null` sends
+  // `llmParams: null` to clear; `undefined` omits. The server REPLACES
+  // `llmParams` wholesale on update (no merge) — when it grows a second key,
+  // extend this body at the same time or an update will wipe that key.
   // 0.21.0: llmIntegrationId forwarded when set (null clears the pin).
   return compactObject({
     name: req.name,
@@ -2487,7 +2510,12 @@ function buildSkillWriteBody(req: SkillCreateRequest | SkillUpdateRequest): Reco
     model: req.model,
     temperature: req.temperature,
     maxTokens: req.maxTokens,
-    reasoningEffort: req.reasoningEffort,
+    llmParams:
+      req.reasoningEffort === undefined
+        ? undefined
+        : req.reasoningEffort === null
+          ? null
+          : { reasoningEffort: req.reasoningEffort },
     llmIntegrationId: req.llmIntegrationId,
     sourceUrl: req.sourceUrl,
     files: req.files,
