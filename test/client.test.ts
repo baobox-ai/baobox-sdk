@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   attachmentFromInline,
@@ -2946,8 +2947,10 @@ describe("skills tenant scope (#247)", () => {
   });
 });
 
-// #301 — reasoningEffort on skill create/update/read
-describe("skill reasoningEffort (#301)", () => {
+// #301 / T3 (0.30.0) — reasoningEffort on skill create/update/read. The server
+// only reads/returns `llmParams: { reasoningEffort } | null`; a top-level
+// `reasoningEffort` is stripped. Mocks here return the SERVER's real shape.
+describe("skill reasoningEffort (#301, llmParams wire shape)", () => {
   const rawSkillBase = {
     skillId: "sk_re",
     name: "ReasoningSkill",
@@ -2956,140 +2959,158 @@ describe("skill reasoningEffort (#301)", () => {
     model: "model-x",
     temperature: 0.5,
     maxTokens: 2048,
+    llmParams: null,
+    llmIntegrationId: null,
+    llmSource: "tenant_default",
     sourceUrl: null,
     tenantId: null,
     createdAt: "2026-06-13T00:00:00Z",
     updatedAt: "2026-06-13T00:00:00Z",
   };
 
-  it("skills.create sends reasoningEffort on the wire when supplied", async () => {
-    let seenBody: Record<string, unknown> = {};
+  function setup(status: number, data: Record<string, unknown>) {
+    const seen: { body: Record<string, unknown> } = { body: {} };
     const fetch = fakeFetch((_url, init) => {
-      seenBody = JSON.parse(init.body as string) as Record<string, unknown>;
-      return jsonResponse(201, {
-        data: { ...rawSkillBase, reasoningEffort: "high" },
-        metadata: { requestId: "r_re1", latencyMs: 1 },
-      });
+      seen.body = JSON.parse(init.body as string) as Record<string, unknown>;
+      return jsonResponse(status, { data, metadata: { requestId: "r_re", latencyMs: 1 } });
     });
-    const bb = new BaoBoxClient({
-      endpoint: "https://api.example.com",
-      adminSecret: "adm",
-      fetch,
-    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", adminSecret: "adm", fetch });
+    return { seen, bb };
+  }
 
+  it("skills.create sends llmParams.reasoningEffort, not a top-level key", async () => {
+    const { seen, bb } = setup(201, { ...rawSkillBase, llmParams: { reasoningEffort: "high" } });
     const skill = await bb.skills.create({
       name: "ReasoningSkill",
       systemPrompt: "prompt",
       reasoningEffort: "high",
     });
-
-    expect(seenBody.reasoningEffort).toBe("high");
+    expect(seen.body.llmParams).toEqual({ reasoningEffort: "high" });
+    expect("reasoningEffort" in seen.body).toBe(false);
     expect(skill.reasoningEffort).toBe("high");
+    expect(skill.llmParams).toEqual({ reasoningEffort: "high" });
   });
 
-  it("skills.create omits reasoningEffort from the wire when not supplied", async () => {
-    let seenBody: Record<string, unknown> = {};
-    const fetch = fakeFetch((_url, init) => {
-      seenBody = JSON.parse(init.body as string) as Record<string, unknown>;
-      return jsonResponse(201, {
-        data: rawSkillBase,
-        metadata: { requestId: "r_re2", latencyMs: 1 },
-      });
-    });
-    const bb = new BaoBoxClient({
-      endpoint: "https://api.example.com",
-      adminSecret: "adm",
-      fetch,
-    });
-
+  it("skills.create omits llmParams and reasoningEffort when not supplied", async () => {
+    const { seen, bb } = setup(201, { ...rawSkillBase });
     const skill = await bb.skills.create({ name: "ReasoningSkill", systemPrompt: "prompt" });
-
-    expect("reasoningEffort" in seenBody).toBe(false);
+    expect("llmParams" in seen.body).toBe(false);
+    expect("reasoningEffort" in seen.body).toBe(false);
     expect("reasoningEffort" in skill).toBe(false);
   });
 
-  it("skills.update sends reasoningEffort on the wire when supplied", async () => {
-    let seenBody: Record<string, unknown> = {};
-    const fetch = fakeFetch((_url, init) => {
-      seenBody = JSON.parse(init.body as string) as Record<string, unknown>;
-      return jsonResponse(200, {
-        data: { ...rawSkillBase, reasoningEffort: "medium" },
-        metadata: { requestId: "r_re3", latencyMs: 1 },
-      });
-    });
-    const bb = new BaoBoxClient({
-      endpoint: "https://api.example.com",
-      adminSecret: "adm",
-      fetch,
-    });
-
+  it("skills.update sends llmParams.reasoningEffort", async () => {
+    const { seen, bb } = setup(200, { ...rawSkillBase, llmParams: { reasoningEffort: "medium" } });
     const skill = await bb.skills.update("sk_re", { reasoningEffort: "medium" });
-
-    expect(seenBody.reasoningEffort).toBe("medium");
+    expect(seen.body.llmParams).toEqual({ reasoningEffort: "medium" });
+    expect("reasoningEffort" in seen.body).toBe(false);
     expect(skill.reasoningEffort).toBe("medium");
   });
 
-  it("Skill.reasoningEffort is absent when the server omits it (pre-#301 compat)", async () => {
-    const fetch = fakeFetch(() =>
-      jsonResponse(200, {
-        data: [rawSkillBase],
-        metadata: { requestId: "r_re4", latencyMs: 1 },
-      }),
-    );
-    const bb = new BaoBoxClient({
-      endpoint: "https://api.example.com",
-      adminSecret: "adm",
-      fetch,
-    });
-
-    const [skill] = await bb.skills.list();
-    expect("reasoningEffort" in (skill ?? {})).toBe(false);
+  it("skills.update with reasoningEffort: null sends llmParams: null to clear", async () => {
+    const { seen, bb } = setup(200, { ...rawSkillBase, llmParams: null });
+    const skill = await bb.skills.update("sk_re", { reasoningEffort: null });
+    expect(seen.body.llmParams).toBeNull();
+    expect("reasoningEffort" in seen.body).toBe(false);
+    expect("reasoningEffort" in skill).toBe(false);
+    expect(skill.llmParams).toBeNull();
   });
 
-  it("skills.create sends reasoningEffort 'none' on the wire (xhigh-tier model compat)", async () => {
-    let seenBody: Record<string, unknown> = {};
-    const fetch = fakeFetch((_url, init) => {
-      seenBody = JSON.parse(init.body as string) as Record<string, unknown>;
-      return jsonResponse(201, {
-        data: { ...rawSkillBase, reasoningEffort: "none" },
-        metadata: { requestId: "r_re5", latencyMs: 1 },
-      });
-    });
-    const bb = new BaoBoxClient({
-      endpoint: "https://api.example.com",
-      adminSecret: "adm",
-      fetch,
-    });
-
-    const skill = await bb.skills.create({
+  it("sends tier 'none' and 'xhigh' through llmParams", async () => {
+    const a = setup(201, { ...rawSkillBase, llmParams: { reasoningEffort: "none" } });
+    const created = await a.bb.skills.create({
       name: "ReasoningSkill",
       systemPrompt: "prompt",
       reasoningEffort: "none",
     });
+    expect(a.seen.body.llmParams).toEqual({ reasoningEffort: "none" });
+    expect(created.reasoningEffort).toBe("none");
 
-    expect(seenBody.reasoningEffort).toBe("none");
-    expect(skill.reasoningEffort).toBe("none");
+    const b = setup(200, { ...rawSkillBase, llmParams: { reasoningEffort: "xhigh" } });
+    const updated = await b.bb.skills.update("sk_re", { reasoningEffort: "xhigh" });
+    expect(b.seen.body.llmParams).toEqual({ reasoningEffort: "xhigh" });
+    expect(updated.reasoningEffort).toBe("xhigh");
   });
 
-  it("skills.update sends reasoningEffort 'xhigh' on the wire (xhigh-tier model compat)", async () => {
-    let seenBody: Record<string, unknown> = {};
-    const fetch = fakeFetch((_url, init) => {
-      seenBody = JSON.parse(init.body as string) as Record<string, unknown>;
-      return jsonResponse(200, {
-        data: { ...rawSkillBase, reasoningEffort: "xhigh" },
-        metadata: { requestId: "r_re6", latencyMs: 1 },
-      });
-    });
-    const bb = new BaoBoxClient({
-      endpoint: "https://api.example.com",
-      adminSecret: "adm",
-      fetch,
-    });
+  it("reads map reasoningEffort from llmParams and expose llmParams/llmIntegrationId/llmSource", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: [
+          {
+            ...rawSkillBase,
+            llmParams: { reasoningEffort: "low" },
+            llmIntegrationId: "int_1",
+            llmSource: "pinned",
+          },
+        ],
+        metadata: { requestId: "r_re4", latencyMs: 1 },
+      }),
+    );
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", adminSecret: "adm", fetch });
+    const [skill] = await bb.skills.list();
+    expect(skill?.reasoningEffort).toBe("low");
+    expect(skill?.llmParams).toEqual({ reasoningEffort: "low" });
+    expect(skill?.llmIntegrationId).toBe("int_1");
+    expect(skill?.llmSource).toBe("pinned");
+  });
 
-    const skill = await bb.skills.update("sk_re", { reasoningEffort: "xhigh" });
+  it("falls back to legacy top-level reasoningEffort when llmParams is absent", async () => {
+    const { llmParams: _p, ...legacyBase } = rawSkillBase;
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: [{ ...legacyBase, reasoningEffort: "medium" }],
+        metadata: { requestId: "r_re5", latencyMs: 1 },
+      }),
+    );
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", adminSecret: "adm", fetch });
+    const [skill] = await bb.skills.list();
+    expect(skill?.reasoningEffort).toBe("medium");
+  });
 
-    expect(seenBody.reasoningEffort).toBe("xhigh");
-    expect(skill.reasoningEffort).toBe("xhigh");
+  it("Skill.reasoningEffort is absent when the server sends neither shape", async () => {
+    const { llmParams: _p, llmIntegrationId: _i, llmSource: _s, ...oldBase } = rawSkillBase;
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, { data: [oldBase], metadata: { requestId: "r_re6", latencyMs: 1 } }),
+    );
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", adminSecret: "adm", fetch });
+    const [skill] = await bb.skills.list();
+    expect("reasoningEffort" in (skill ?? {})).toBe(false);
+    expect("llmParams" in (skill ?? {})).toBe(false);
+  });
+
+  // Guard: every key the SDK emits on a skill write must be a property the
+  // server's create/update schema declares (it strips unknown keys silently,
+  // which is how the top-level reasoningEffort bug went unnoticed). The
+  // fixture is a synthetic list of those property names.
+  it("emits only keys declared by the server skill write schema", async () => {
+    const fixture = JSON.parse(
+      readFileSync(new URL("./fixtures/skill-write-request-keys.json", import.meta.url), "utf8"),
+    ) as { create: string[]; update: string[] };
+    const full = {
+      name: "n",
+      description: "d",
+      systemPrompt: "p",
+      model: "m",
+      temperature: 0.1,
+      maxTokens: 10,
+      reasoningEffort: "high" as const,
+      llmIntegrationId: "int_1",
+      sourceUrl: "https://example.com/skill.md",
+      files: [{ path: "a.md", content: "x" }],
+      tools: ["tool_1"],
+    };
+    const create = setup(201, { ...rawSkillBase });
+    await create.bb.skills.create({ ...full, tools: undefined });
+    const update = setup(200, { ...rawSkillBase });
+    await update.bb.skills.update("sk_re", { ...full, tools: undefined });
+    for (const key of Object.keys(create.seen.body)) expect(fixture.create).toContain(key);
+    for (const key of Object.keys(update.seen.body)) expect(fixture.update).toContain(key);
+    // Every convenience/modelled field was actually exercised.
+    expect(Object.keys(create.seen.body).sort()).toEqual(
+      ["name", "description", "systemPrompt", "model", "temperature", "maxTokens", "llmParams", "llmIntegrationId", "sourceUrl", "files"].sort(),
+    );
+    // `tools` is an SDK convenience field reconciled via separate routes.
+    expect("tools" in create.seen.body).toBe(false);
   });
 });
 
