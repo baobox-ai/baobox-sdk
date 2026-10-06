@@ -26,6 +26,16 @@ Fixes `reasoningEffort` on skills, which the server never applied.
   `none` disables thinking on models that support a toggle; a tier the model
   does not accept is reported by the server as an ignored parameter.
 
+### Notes
+
+- **Behaviour change on upgrade:** a `reasoningEffort` your code has been
+  passing since 0.17.0 was silently ignored until now. After upgrading it takes
+  effect — e.g. `xhigh` raises latency and cost. Check the values you pass.
+- `update` replaces `llmParams` as a whole object (the server does not merge
+  it). Today `reasoningEffort` is its only key, so this is equivalent to a merge.
+- Bump the Skill Studio root `overrides[@baobox/sdk]` pin to `^0.30.0` after
+  publish, or a clean install keeps the old version.
+
 ## 0.29.0
 
 Tenant-key tool CRUD (#574) — closes the last admin-secret dependency in the

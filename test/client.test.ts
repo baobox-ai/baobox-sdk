@@ -2991,6 +2991,19 @@ describe("skill reasoningEffort (#301, llmParams wire shape)", () => {
     expect(skill.llmParams).toEqual({ reasoningEffort: "high" });
   });
 
+  it("skills.update that does not touch reasoningEffort sends no llmParams (no clobber)", async () => {
+    const { seen, bb } = setup(200, { ...rawSkillBase, llmParams: { reasoningEffort: "high" } });
+    await bb.skills.update("sk_re", { name: "Renamed" });
+    expect("llmParams" in seen.body).toBe(false);
+    expect("reasoningEffort" in seen.body).toBe(false);
+  });
+
+  it("skills.create with reasoningEffort null sends llmParams null", async () => {
+    const { seen, bb } = setup(201, { ...rawSkillBase, llmParams: null });
+    await bb.skills.create({ name: "ReasoningSkill", systemPrompt: "prompt", reasoningEffort: null });
+    expect(seen.body.llmParams).toBeNull();
+  });
+
   it("skills.create omits llmParams and reasoningEffort when not supplied", async () => {
     const { seen, bb } = setup(201, { ...rawSkillBase });
     const skill = await bb.skills.create({ name: "ReasoningSkill", systemPrompt: "prompt" });

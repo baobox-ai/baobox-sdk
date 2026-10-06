@@ -499,8 +499,8 @@ export type SkillCreateRequest = {
   maxTokens?: number;
   /**
    * How much reasoning compute to apply. Optional — omit to use the
-   * server-side default. See `ReasoningEffort` for the tiers. `null` clears a
-   * previously set value. `none` disables thinking on models that support a
+   * server-side default. See `ReasoningEffort` for the tiers. On update, `null`
+   * clears a previously set value (on create it is the same as omitting it). `none` disables thinking on models that support a
    * toggle; a tier the model does not accept is reported by the server as an
    * ignored parameter. Sent on the wire as `llmParams.reasoningEffort`.
    */

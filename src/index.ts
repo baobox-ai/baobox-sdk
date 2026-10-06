@@ -2285,7 +2285,8 @@ function mapSkill(raw: RawSkill): Skill {
     // 0.17.0 — pass through when present; omit when the server doesn't send it
     // so consumers on older servers still get a well-typed Skill object.
     // 0.30.0 — the server returns `llmParams.reasoningEffort`; the top-level
-    // `reasoningEffort` is a legacy fallback (one minor) for older payloads.
+    // `reasoningEffort` is a forward-compat fallback only (no server has emitted it).
+    // TODO(0.31.0): drop the top-level fallback.
     ...(raw.llmParams?.reasoningEffort !== undefined
       ? { reasoningEffort: raw.llmParams.reasoningEffort }
       : "reasoningEffort" in raw
@@ -2498,7 +2499,9 @@ function buildSkillWriteBody(req: SkillCreateRequest | SkillUpdateRequest): Reco
   // 0.17.0: reasoningEffort forwarded when set; compactObject drops undefined.
   // 0.30.0: reasoningEffort is sent as `llmParams.reasoningEffort` (the only
   // place the server reads it; a top-level key is stripped). `null` sends
-  // `llmParams: null` to clear; `undefined` omits.
+  // `llmParams: null` to clear; `undefined` omits. The server REPLACES
+  // `llmParams` wholesale on update (no merge) — when it grows a second key,
+  // extend this body at the same time or an update will wipe that key.
   // 0.21.0: llmIntegrationId forwarded when set (null clears the pin).
   return compactObject({
     name: req.name,
