@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.30.0
+
+Fixes `reasoningEffort` on skills, which the server never applied.
+
+### Fixed
+
+- `reasoningEffort` was **never applied by the server** on any SDK write since
+  0.17.0: the SDK sent it as a top-level body key, but the server only reads
+  `llmParams.reasoningEffort` and silently strips unknown keys. `skills.create`
+  / `skills.update` now send `llmParams: { reasoningEffort }`; passing
+  `reasoningEffort: null` sends `llmParams: null` to clear it. The top-level
+  key is no longer sent.
+- Reads always returned `reasoningEffort` as `undefined` because the server
+  returns `llmParams`. `Skill.reasoningEffort` now maps from
+  `llmParams.reasoningEffort` (falling back to a legacy top-level
+  `reasoningEffort` for one minor).
+
+### Added
+
+- `Skill.llmParams`, `Skill.llmIntegrationId` and `Skill.llmSource`
+  (`"tenant_default" | "platform" | "pinned"`), plus the `SkillLlmParams` and
+  `SkillLlmSource` types.
+- `reasoningEffort` on skill create/update requests accepts `null` (clear).
+  `none` disables thinking on models that support a toggle; a tier the model
+  does not accept is reported by the server as an ignored parameter.
+
 ## 0.29.0
 
 Tenant-key tool CRUD (#574) — closes the last admin-secret dependency in the
