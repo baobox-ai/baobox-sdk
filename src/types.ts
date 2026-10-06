@@ -1160,6 +1160,11 @@ export type LlmCatalog = {
   providers: LlmCatalogProvider[];
   /** All reasoning-effort tier strings valid across all providers. */
   reasoningEfforts: string[];
+  /**
+   * 0.30.0 — the model a skill created without `model` is stored with.
+   * Optional: absent on servers that predate the field.
+   */
+  platformDefaultModel?: string;
 };
 
 // ─── LLM integrations (0.20.0) ───────────────────────────────────────────────

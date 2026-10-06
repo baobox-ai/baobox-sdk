@@ -22,6 +22,8 @@ Fixes `reasoningEffort` on skills, which the server never applied.
 - `Skill.llmParams`, `Skill.llmIntegrationId` and `Skill.llmSource`
   (`"tenant_default" | "platform" | "pinned"`), plus the `SkillLlmParams` and
   `SkillLlmSource` types.
+- `LlmCatalog.platformDefaultModel` (optional) — the model a skill created
+  without `model` is stored with, as reported by `catalog.list()`.
 - `reasoningEffort` on skill create/update requests accepts `null` (clear).
   `none` disables thinking on models that support a toggle; a tier the model
   does not accept is reported by the server as an ignored parameter.

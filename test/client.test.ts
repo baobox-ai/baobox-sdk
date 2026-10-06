@@ -2099,6 +2099,7 @@ describe("catalog.list (0.18.0)", () => {
             },
           ],
           reasoningEfforts: ["low", "medium", "high", "xhigh"],
+          platformDefaultModel: "model-default",
         },
         metadata: { requestId: "r_cat", latencyMs: 8 },
       });
@@ -2115,6 +2116,7 @@ describe("catalog.list (0.18.0)", () => {
     expect(seen.url).toBe("https://api.example.com/api/v1/llm-providers");
     expect(seen.auth).toBe("Bearer adm-secret");
     expect(catalog.reasoningEfforts).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(catalog.platformDefaultModel).toBe("model-default");
     expect(catalog.providers).toHaveLength(1);
     const [provider] = catalog.providers;
     expect(provider?.id).toBe("openai");
