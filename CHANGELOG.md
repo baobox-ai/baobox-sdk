@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.31.0
+
+Skill provider transport control, and the transport reported on responses.
+
+### Added
+
+- `llmTransport` on `skills.create` / `skills.update` requests and on `Skill`
+  (`SkillLlmTransport = "auto" | "stream" | "non_stream"`). `auto` (default)
+  streams from the provider internally when the call's effective max tokens is
+  >= 15 000; `stream` always does; `non_stream` never does, so very long
+  generations (several minutes) may be cut before the provider responds. On
+  update, `null` clears back to `auto`; `undefined` omits the field.
+- `ResponseMeta.transport` (`"stream" | "non_stream"`) — the transport the
+  server used for a `/workflow` or `/chat` call. Absent on older servers.
+
 ## 0.30.0
 
 Fixes `reasoningEffort` on skills, which the server never applied.
