@@ -1,5 +1,5 @@
 import { BaoBoxError } from "./errors.js";
-import { MAX_INLINE_BYTES } from "./types.js";
+import { DECISION_SKILL_SCHEMA_REF, MAX_INLINE_BYTES } from "./types.js";
 import type {
   AdminStats,
   AdminSkillGuardrailUpdateRequest,
@@ -9,6 +9,15 @@ import type {
   IntegrationModel,
   LlmCatalog,
   LlmIntegration,
+  LlmIntegrationListOptions,
+  DecisionSkillOutput,
+  DecisionSkillSpec,
+  EvalGuardPhase,
+  EvalRun,
+  EvalRunMetadata,
+  EvalRunResultScores,
+  SkillKind,
+  StructuredBlock,
   ModelRole,
   RoleModelChainEntry,
   SkillRoleModel,
@@ -102,7 +111,7 @@ import type {
 } from "./types.js";
 
 export { BaoBoxError } from "./errors.js";
-export { MAX_INLINE_BYTES } from "./types.js";
+export { DECISION_SKILL_SCHEMA_REF, MAX_INLINE_BYTES } from "./types.js";
 export type * from "./types.js";
 
 type FetchFn = typeof globalThis.fetch;
@@ -208,6 +217,9 @@ type RawSkill = {
   llmSource?: SkillLlmSource;
   // 0.31.0 — provider transport; optional so older servers don't break the mapper.
   llmTransport?: SkillLlmTransport | null;
+  // 0.32.0 — decision skills; optional so older servers don't break the mapper.
+  skillKind?: SkillKind;
+  decisionSpec?: DecisionSkillSpec | null;
   sourceUrl: string | null;
   tenantId: string | null;
   // η.1 / B-3 — per-skill attachment policy. Optional on the SDK side so a
@@ -302,6 +314,8 @@ type RawEvalCase = {
   sourceSessionId: string | null;
   /** T8 — comparison mode. Server defaults to "judge". */
   matchMode: EvalMatchMode;
+  /** 0.32.0 — guard phase of a guard-scoped case; null = main-skill case. */
+  guardPhase?: EvalGuardPhase | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -759,7 +773,7 @@ export class BaoBoxClient {
      * List all LLM integrations configured for the tenant.
      * Hits `GET /api/v1/llm-integrations`. Requires `skills:read`.
      */
-    list: (options?: { tenantId?: string }) => Promise<LlmIntegration[]>;
+    list: (options?: LlmIntegrationListOptions) => Promise<LlmIntegration[]>;
     /**
      * List the models available for a specific integration.
      * Hits `GET /api/v1/llm-integrations/:id/models`. Requires `skills:read`.
@@ -952,7 +966,11 @@ export class BaoBoxClient {
       };
       sessionId?: string;
       session_id?: string;
+      // The guardrail refusal frame carries `blocks` (and a string `content`);
+      // a normal turn carries its ContentBlock[] as `content` (present only
+      // when non-empty).
       blocks?: ContentBlock[];
+      content?: ContentBlock[] | string;
     }>(
       "POST",
       "/api/v1/chat",
@@ -983,7 +1001,12 @@ export class BaoBoxClient {
         outputTokens: usage.outputTokens ?? usage.output_tokens ?? 0,
       },
       sessionId: body.data.sessionId ?? body.data.session_id,
-      blocks: body.data.blocks,
+      // 0.32.0 — fall back to `content` when it is a block array: that is
+      // where `POST /chat` puts a turn's blocks (e.g. a decision skill's
+      // `structured` answer). Before 0.32.0 `blocks` was only ever set on a
+      // refusal frame.
+      blocks:
+        body.data.blocks ?? (Array.isArray(body.data.content) ? body.data.content : undefined),
       refusalSurface: body.refusalSurface,
       meta: body.meta,
     };
@@ -1589,11 +1612,13 @@ export class BaoBoxClient {
   // path (adminSecret OR apiKey with skills:read) so the Skill Studio BFF can
   // call these with an apiKey-only client scoped to a single tenant.
   private async listLlmIntegrations(
-    options?: { tenantId?: string },
+    options?: LlmIntegrationListOptions,
   ): Promise<LlmIntegration[]> {
+    // 0.32.0 — `?use=` only when the caller asked for it, so the default
+    // request is byte-identical to 0.31 (the server then defaults to chat rows).
     const body = await this.requestSkills<LlmIntegration[]>(
       "GET",
-      "/api/v1/llm-integrations",
+      appendQuery("/api/v1/llm-integrations", { use: options?.use }),
       undefined,
       tenantScopeHeaders(options),
     );
@@ -1903,6 +1928,8 @@ export class BaoBoxClient {
         expectedOutput: req.expectedOutput,
         sourceSessionId: req.sourceSessionId,
         matchMode: req.matchMode,
+        // 0.32.0 — guard-scoped case; `undefined` dropped, `null` forwarded.
+        guardPhase: req.guardPhase,
       }),
     );
     return mapEvalCase(body.data);
@@ -1923,6 +1950,10 @@ export class BaoBoxClient {
       promptVersion: req.promptVersion,
       // T9 (#288 §D) — model override; recorded into EvalRun.metadata.model.
       modelOverride: req.modelOverride,
+      // 0.32.0 — judge selection; each key is sent only when set.
+      judge: req.judge,
+      judgeModel: req.judgeModel,
+      judgeIntegrationId: req.judgeIntegrationId,
     }));
     return mapEvalRunExecution(body.data);
   }
@@ -2291,8 +2322,9 @@ function mapSkill(raw: RawSkill): Skill {
     // 0.17.0 — pass through when present; omit when the server doesn't send it
     // so consumers on older servers still get a well-typed Skill object.
     // 0.30.0 — the server returns `llmParams.reasoningEffort`; the top-level
-    // `reasoningEffort` is a forward-compat fallback only (no server has emitted it).
-    // TODO(0.31.0): drop the top-level fallback.
+    // `reasoningEffort` is a legacy read fallback only (no server has emitted
+    // it). Kept deliberately: it never fires against a real server, and
+    // dropping it would only break consumers' test mocks.
     ...(raw.llmParams?.reasoningEffort !== undefined
       ? { reasoningEffort: raw.llmParams.reasoningEffort }
       : "reasoningEffort" in raw
@@ -2302,6 +2334,9 @@ function mapSkill(raw: RawSkill): Skill {
     ...("llmIntegrationId" in raw ? { llmIntegrationId: raw.llmIntegrationId } : {}),
     ...("llmSource" in raw ? { llmSource: raw.llmSource } : {}),
     ...("llmTransport" in raw ? { llmTransport: raw.llmTransport } : {}),
+    // 0.32.0 — passed through only when the server sends them.
+    ...("skillKind" in raw ? { skillKind: raw.skillKind } : {}),
+    ...("decisionSpec" in raw ? { decisionSpec: raw.decisionSpec } : {}),
     sourceUrl: raw.sourceUrl,
     tenantId: raw.tenantId,
     createdAt: raw.createdAt,
@@ -2405,6 +2440,8 @@ function mapEvalCase(raw: RawEvalCase): EvalCase {
     // sourceSessionId → null; matchMode → "judge" (the server default).
     sourceSessionId: raw.sourceSessionId ?? null,
     matchMode: raw.matchMode ?? "judge",
+    // 0.32.0 — passed through only when the server sends it.
+    ...("guardPhase" in raw ? { guardPhase: raw.guardPhase ?? null } : {}),
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
   };
@@ -2526,6 +2563,10 @@ function buildSkillWriteBody(req: SkillCreateRequest | SkillUpdateRequest): Reco
     llmIntegrationId: req.llmIntegrationId,
     // 0.31.0: llmTransport forwarded when set (null clears back to auto).
     llmTransport: req.llmTransport,
+    // 0.32.0: decision skills. `undefined` is dropped; `null` decisionSpec is
+    // forwarded verbatim (a no-op on a chat skill, refused on a decision one).
+    skillKind: req.skillKind,
+    decisionSpec: req.decisionSpec,
     sourceUrl: req.sourceUrl,
     files: req.files,
   });
@@ -2682,6 +2723,85 @@ export function attachmentWithStrategy(
   strategy: ParseStrategy,
 ): AttachmentInput {
   return { ...att, parseStrategy: strategy };
+}
+
+// ─── Decision skills + eval metadata helpers (0.32.0) ────────────────────────
+// Pure — no network. Exported standalone.
+
+/**
+ * True when `value` is a decision skill's answer (`baobox.decision.v1`):
+ * an object with `kind: "decision"`, `version: 1` and an `answers` object.
+ */
+export function isDecisionSkillOutput(value: unknown): value is DecisionSkillOutput {
+  if (!isJsonObject(value)) return false;
+  return value.kind === "decision" && value.version === 1 && isJsonObject(value.answers);
+}
+
+/**
+ * Extract a decision skill's answer from a response:
+ * - `workflow()` → `output`, when it is a decision output;
+ * - `chat()` (or a `/chat/stream` `assistant_message` frame's data) → the
+ *   `data` of the first `structured` block whose `schema_ref` is
+ *   `DECISION_SKILL_SCHEMA_REF`.
+ * Returns `undefined` for a chat skill's response or a refusal.
+ */
+export function decisionOutputOf(
+  res: { output?: unknown; blocks?: ContentBlock[] } | null | undefined,
+): DecisionSkillOutput | undefined {
+  if (!res) return undefined;
+  if (isDecisionSkillOutput(res.output)) return res.output;
+  for (const block of res.blocks ?? []) {
+    if (isDecisionBlock(block)) return block.data;
+  }
+  return undefined;
+}
+
+function isDecisionBlock(
+  block: ContentBlock,
+): block is StructuredBlock & { data: DecisionSkillOutput } {
+  return (
+    block.type === "structured" &&
+    block.schema_ref === DECISION_SKILL_SCHEMA_REF &&
+    isDecisionSkillOutput(block.data)
+  );
+}
+
+/**
+ * Parse an eval result row's `scoresJson` (or the raw string) into its typed
+ * shape: dimension scores plus the platform meta `_scoredBy`, `_judge`,
+ * `_guard`, `_decision`. Returns `null` when the value is null, malformed, or
+ * not a JSON object.
+ */
+export function parseEvalScores(
+  row: { scoresJson: string | null } | string | null | undefined,
+): EvalRunResultScores | null {
+  const text = typeof row === "string" ? row : row?.scoresJson;
+  const parsed = parseJsonObject(text);
+  return parsed ? (parsed as EvalRunResultScores) : null;
+}
+
+/**
+ * Parse an eval run's `metadata` string (or the raw string) into its typed
+ * shape (`judge_kind`, `judge_model`, `judge_key_source`, …). Returns `{}`
+ * when the value is missing, malformed, or not a JSON object.
+ */
+export function parseEvalRunMetadata(
+  run: Pick<EvalRun, "metadata"> | string | null | undefined,
+): EvalRunMetadata {
+  const text = typeof run === "string" ? run : run?.metadata;
+  return (parseJsonObject(text) ?? {}) as EvalRunMetadata;
+}
+
+// A JSON object parsed from `text`, or null (not a string, malformed JSON, or
+// valid JSON that is not an object).
+function parseJsonObject(text: string | null | undefined): JsonObject | null {
+  if (typeof text !== "string") return null;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return isJsonObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 // Wire conversion — camelCase domain → snake_case JSON. Centralized so

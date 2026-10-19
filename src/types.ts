@@ -497,16 +497,168 @@ export type SkillLlmParams = {
  *
  * - `auto` (default): streams from the provider internally when the call's
  *   effective max tokens is >= 15 000, otherwise does not.
- * - `stream`: always streams from the provider internally.
- * - `non_stream`: never does. Very long generations (several minutes) may then
- *   be cut before the provider responds.
+ * - `stream`: requests streaming from the provider for every call. It is a
+ *   request, not a guarantee — a provider that cannot stream (or refuses a
+ *   stream and is retried) runs `non_stream`; `meta.transport` on the
+ *   `/workflow` / `/chat` response reports what actually happened.
+ * - `non_stream`: never streams. Very long generations (several minutes) may
+ *   then be cut before the provider responds.
  *
  * This is internal to the server; the SDK response shape is the same either way.
+ * The server stores `auto` as `null`, so a skill read back carries
+ * `null | "stream" | "non_stream"` — never `"auto"`.
  */
 export type SkillLlmTransport = "auto" | "stream" | "non_stream";
 
 /** Where a skill's LLM credentials resolve from. */
 export type SkillLlmSource = "tenant_default" | "platform" | "pinned";
+
+// ─── Decision skills (0.32.0) ────────────────────────────────────────────────
+//
+// A decision skill answers a fixed list of typed questions (yes/no, pick-one,
+// score) about the message it is given, on a DECISION model (TypeSafe Jev or
+// OpenAI Decisions), and returns one JSON object (`DecisionSkillOutput`)
+// instead of free text.
+
+/**
+ * What a skill is. `"chat"` (the default; every skill created before decision
+ * skills existed) writes text on a chat model. `"decision"` answers the typed
+ * questions in `decisionSpec` on a decision model. Immutable after create.
+ */
+export type SkillKind = "chat" | "decision";
+
+/**
+ * One question of a decision skill. The list is ORDERED: the canonical output's
+ * `answers` follow the same order.
+ *
+ * Common fields: `id` matches `^[a-z][a-z0-9_]{0,31}$` and is unique within the
+ * spec; `prompt` is 1–2000 characters; `label` (optional) is at most 80.
+ * Unknown keys are refused by the server.
+ *
+ * - `boolean` — `labels` are the display words for yes / no (≤ 40 chars each,
+ *   default "yes" / "no"); `criteria` say what a yes / a no MEANS (≤ 500
+ *   chars each); `threshold` is strictly between 0 and 1 (default 0.5) and
+ *   `answer.value = probability >= threshold`.
+ * - `choice` — 2–255 `options`; each `value` matches `^[A-Za-z0-9_.-]{1,64}$`
+ *   and is unique, `description` ≤ 500 chars, `label` ≤ 80.
+ * - `score` — 2–10 `levels`, ordered low → high; unique `label` (≤ 80 chars),
+ *   `description` ≤ 500 chars.
+ */
+export type DecisionSkillQuestion =
+  | {
+      id: string;
+      type: "boolean";
+      prompt: string;
+      label?: string;
+      labels?: { true: string; false: string };
+      criteria?: { true: string; false: string };
+      threshold?: number;
+    }
+  | {
+      id: string;
+      type: "choice";
+      prompt: string;
+      label?: string;
+      options: { value: string; description: string; label?: string }[];
+    }
+  | {
+      id: string;
+      type: "score";
+      prompt: string;
+      label?: string;
+      levels: { label: string; description: string }[];
+    };
+
+/**
+ * The questions a decision skill answers (`Skill.decisionSpec`).
+ *
+ * - `version` — always `1`.
+ * - `questions` — 1–20 questions (see `DecisionSkillQuestion`).
+ * - `state` — what rides in the decision state besides the user message:
+ *   `history` = the last N session turns (integer 0–10, default 0);
+ *   `attachments` = the turn's parsed attachment text (default `true`).
+ */
+export type DecisionSkillSpec = {
+  version: 1;
+  questions: DecisionSkillQuestion[];
+  state?: { history?: number; attachments?: boolean };
+};
+
+/**
+ * The `schema_ref` of the `structured` content block that carries a decision
+ * skill's answer on `/chat` and `/chat/stream`.
+ */
+export const DECISION_SKILL_SCHEMA_REF = "baobox.decision.v1";
+
+/** A `boolean` question's answer. */
+export type DecisionSkillBooleanAnswer = {
+  type: "boolean";
+  /** `probability >= threshold`. */
+  value: boolean;
+  /** p(true), 3 decimal places. */
+  probability: number;
+  threshold: number;
+};
+
+/** A `choice` question's answer. */
+export type DecisionSkillChoiceAnswer = {
+  type: "choice";
+  /** The chosen option's `value`. */
+  value: string;
+  label: string;
+  /** option value → probability, in spec order, 3 decimal places. */
+  probabilities: Record<string, number>;
+  confidence: number;
+};
+
+/** A `score` question's answer. */
+export type DecisionSkillScoreAnswer = {
+  type: "score";
+  /** Level index (0 = lowest): argmax of `probabilities`, ties → lower index. */
+  value: number;
+  label: string;
+  /** The probability-weighted level (fractional), 3 decimal places. */
+  expected: number;
+  /** p(level i), index-aligned with the spec's `levels`, 3 decimal places. */
+  probabilities: number[];
+  confidence: number;
+};
+
+export type DecisionSkillAnswer =
+  | DecisionSkillBooleanAnswer
+  | DecisionSkillChoiceAnswer
+  | DecisionSkillScoreAnswer;
+
+/**
+ * A decision skill's answer (`baobox.decision.v1`) — one shape on every
+ * channel:
+ * - `POST /workflow` → `WorkflowResponse.output` is this object and `response`
+ *   is its JSON text (use `bb.workflow<DecisionSkillOutput>(…)`). A decision
+ *   skill refuses `outputSchema` (422 `decision_skill_output_schema_unsupported`).
+ * - `POST /chat` → `response` is the JSON text and `blocks` holds one
+ *   `structured` block whose `schema_ref` is `DECISION_SKILL_SCHEMA_REF` and
+ *   whose `data` is this object.
+ * - `/chat/stream` → the `assistant_message` frame's `blocks` carry the same
+ *   block.
+ *
+ * `decisionOutputOf(response)` extracts it from either response type.
+ *
+ * `usage` and `latency_ms` are snake_case ON PURPOSE: this is the payload
+ * contract (the same JSON the server stores and returns as text), not the
+ * camelCase response envelope. Do not camelCase it.
+ */
+export type DecisionSkillOutput = {
+  kind: "decision";
+  version: 1;
+  skillId: string;
+  provider: string;
+  /** The model id the vendor echoed. */
+  model: string;
+  /** question id → answer, in spec order. */
+  answers: Record<string, DecisionSkillAnswer>;
+  usage: { input_tokens: number; output_tokens: number };
+  latency_ms: number;
+};
 
 export type SkillCreateRequest = {
   name: string;
@@ -527,7 +679,9 @@ export type SkillCreateRequest = {
    * Pin a specific tenant LLM integration (the model runs on that
    * integration's provider/key). `null` clears the pin → tenant default.
    * Tenant-scoped; the key's tenant must own the integration (server 4xx
-   * otherwise).
+   * otherwise). A chat skill cannot pin a decision-only integration (422
+   * `integration_not_chat_capable`); a decision skill must pin a
+   * decision-capable one (see `skillKind`).
    */
   llmIntegrationId?: string | null;
   /**
@@ -536,6 +690,40 @@ export type SkillCreateRequest = {
    * is the same as omitting it).
    */
   llmTransport?: SkillLlmTransport | null;
+  /**
+   * 0.32.0 — what the skill is. Omit for `"chat"` on create; on update, omit
+   * to keep the stored kind. The kind cannot change after create (422
+   * `decision_skill_kind_immutable`); any value other than `chat` / `decision`
+   * is rejected (400 at the API-key / admin edge, 422 `invalid_skill_kind`
+   * elsewhere).
+   *
+   * A `"decision"` skill (see `DecisionSkillSpec`):
+   * - must pin a decision-capable integration via `llmIntegrationId` (a
+   *   TypeSafe Jev or OpenAI row; list them with
+   *   `llmIntegrations.list({ use: "decision" })`) — 422
+   *   `decision_skill_requires_pin` / `integration_not_decision_capable`;
+   * - `model` must be a versioned decision model id of that provider, or
+   *   omitted for the provider's default (422 `invalid_decision_model`);
+   * - `systemPrompt` is the preamble prepended to every question, at most
+   *   4000 characters (413 `decision_preamble_too_large`);
+   * - has no `files` / `fileLoadMode: "on_demand"` (422
+   *   `decision_skill_no_files`), no tools (`decision_skill_no_tools`), no
+   *   sub-skills (`decision_skill_no_sub_skills`) and no `main` role-model pin
+   *   (`decision_skill_no_main_pin`);
+   * - is tenant-owned only (422 `decision_skill_global_unsupported`);
+   * - starts with the preflight guard off; the postflight guard never runs.
+   */
+  skillKind?: SkillKind;
+  /**
+   * 0.32.0 — the questions a decision skill answers. Required with
+   * `skillKind: "decision"` (422 `decision_spec_required`), refused on a chat
+   * skill (422 `decision_spec_not_allowed`). Omit on update to keep the stored
+   * spec. An invalid spec is a 400 at the API-key / admin edge (one validation
+   * issue per problem) and a 422 `decision_spec_invalid` with
+   * `details.errors[]` on other surfaces. `null` is forwarded as-is: it is a
+   * no-op on a chat skill and cannot clear a decision skill's spec.
+   */
+  decisionSpec?: DecisionSkillSpec | null;
   sourceUrl?: string;
   files?: SkillFileInput[];
   /**
@@ -582,8 +770,22 @@ export type Skill = {
   llmIntegrationId?: string | null;
   /** Credential source the server resolved for this skill. */
   llmSource?: SkillLlmSource;
-  /** Provider transport configured on this skill (`null` = `auto`). */
+  /**
+   * Provider transport configured on this skill (`null` = `auto`). Reads are
+   * `null | "stream" | "non_stream"`: an explicit `auto` is stored and returned
+   * as `null`.
+   */
   llmTransport?: SkillLlmTransport | null;
+  /**
+   * 0.32.0 — `"chat"` or `"decision"`. Absent on servers that predate decision
+   * skills; treat absent as `"chat"`. See `SkillKind`.
+   */
+  skillKind?: SkillKind;
+  /**
+   * 0.32.0 — the questions a decision skill answers. `null` on every chat
+   * skill; set on every decision skill. Absent on older servers.
+   */
+  decisionSpec?: DecisionSkillSpec | null;
   sourceUrl: string | null;
   tenantId: string | null;
   createdAt: string;
@@ -775,6 +977,14 @@ export type UpdateScheduledTaskRequest = {
  */
 export type EvalMatchMode = "judge" | "exact" | "contains";
 
+/**
+ * 0.32.0 — which guard turn a GUARD-SCOPED eval case exercises. A guard case
+ * scores the skill's preflight / postflight guard (its own prompt and model,
+ * or its decision-mode pin) instead of the main skill. `null` / absent = an
+ * ordinary main-skill case.
+ */
+export type EvalGuardPhase = "preflight" | "postflight";
+
 export type EvalCase = {
   id: string;
   skillId: string;
@@ -797,6 +1007,11 @@ export type EvalCase = {
   sourceSessionId?: string | null;
   /** How the case is scored. See `EvalMatchMode`. Defaults to `"judge"`. Optional for back-compat. */
   matchMode?: EvalMatchMode;
+  /**
+   * 0.32.0 — guard phase of a guard-scoped case (see `EvalGuardPhase`); `null`
+   * for a main-skill case. Absent only when the server omitted it.
+   */
+  guardPhase?: EvalGuardPhase | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -822,6 +1037,12 @@ export type CreateEvalCaseRequest = {
    * its default (`"judge"`).
    */
   matchMode?: EvalMatchMode;
+  /**
+   * 0.32.0 — make this a guard-scoped case (see `EvalGuardPhase`). Omit (or
+   * `null`) for a main-skill case. A decision skill's run refuses guard cases
+   * (422 `decision_skill_guard_cases_unsupported`).
+   */
+  guardPhase?: EvalGuardPhase | null;
 };
 
 export type RunEvalRequest = {
@@ -835,6 +1056,36 @@ export type RunEvalRequest = {
    * resolved default.
    */
   modelOverride?: string;
+  /**
+   * 0.32.0 — which judge grades the run's judged cases. `"llm"` (default) is an
+   * LLM judge; `"jev"` is a decision-model judge (TypeSafe Jev by default, or
+   * OpenAI Decisions when `judgeIntegrationId` names an OpenAI integration).
+   * Frozen per run into `metadata.judge_kind` (see `parseEvalRunMetadata`).
+   * Ignored for a decision skill's run, which is graded deterministically.
+   */
+  judge?: EvalJudgeKind;
+  /**
+   * 0.32.0 — the judge's model, frozen into `metadata.judge_model`.
+   * - `judge: "llm"`: a model of the run's own provider (default: the run's own
+   *   model); with `judgeIntegrationId`, a model of THAT integration's provider
+   *   (default: the integration's default model) — another provider's model is
+   *   400 `judge_model_provider_mismatch`.
+   * - `judge: "jev"`: a VERSIONED Jev model id (default `jev-1.13.0`; moving
+   *   aliases such as `jev-latest` are rejected), or an OpenAI Decisions model
+   *   (default `gpt-6-luna`) when `judgeIntegrationId` names an OpenAI row.
+   *   A `jev-*` id without `judge: "jev"` is a 400.
+   */
+  judgeModel?: string;
+  /**
+   * 0.32.0 — grade with one of the tenant's own integrations (its id) instead
+   * of the run's key. With `judge: "llm"`: an LLM judge on that integration.
+   * With `judge: "jev"`: the DECISION integration that grades (a TypeSafe Jev
+   * row, or an OpenAI row graded on OpenAI Decisions). Frozen into
+   * `metadata.judge_integration_id` / `judge_provider_id` /
+   * `judge_key_source`. Tenant `apiKey` only — the admin secret is refused
+   * (400 `judge_integration_not_allowed`; admin runs grade on platform keys).
+   */
+  judgeIntegrationId?: string;
 };
 
 // --- Draft-from-event (T8) ---
@@ -929,6 +1180,118 @@ export type EvalRun = {
   metadata: string;
   createdAt: string;
   completedAt: string | null;
+};
+
+// ─── Eval judge / guard / decision metadata (0.32.0) ─────────────────────────
+
+/** Which judge grades a run (`metadata.judge_kind`). */
+export type EvalJudgeKind = "llm" | "jev";
+
+/**
+ * Whose key graded a run (`metadata.judge_key_source`):
+ * - `"tenant_integration"` — the tenant's own Jev key;
+ * - `"platform_grant"` — the platform key, via the tenant's platform key grant;
+ * - `"platform_admin"` — the platform key, on an admin-secret run;
+ * - `"judge_integration"` — the tenant integration named by `judgeIntegrationId`.
+ * `null` / absent on an LLM-judged run graded on the run's own key.
+ */
+export type EvalJudgeKeySource =
+  | "tenant_integration"
+  | "platform_grant"
+  | "platform_admin"
+  | "judge_integration";
+
+/**
+ * What graded a judged case and what it cost — `_judge` in
+ * `EvalRunResult.scoresJson` (both judge kinds; absent on deterministic and
+ * error rows). Token counts are `null` when the judge reported none.
+ *
+ * The decision-judge fields: `score` is the judge's RAW expected level on its
+ * 0–4 scale (the stored `EvalRunResult.score` is that value + 1, the 1–5 scale);
+ * `argmaxLevel` and the keys of `probabilities` are already on the 1–5 scale.
+ */
+export type EvalJudgeMeta = {
+  provider: EvalJudgeKind;
+  /** On a `"jev"`-kind case graded by a decision provider other than TypeSafe Jev. Absent = Jev. */
+  decisionProvider?: "openai";
+  model: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  rubricVersion?: string;
+  score?: number;
+  argmaxLevel?: number;
+  probabilities?: Record<string, number>;
+  confidence?: number;
+  latencyMs?: number;
+};
+
+/**
+ * The guard call behind a guard-scoped case (`EvalCase.guardPhase`) — `_guard`
+ * in `scoresJson`; absent on main-skill cases. `engine: "chat"` = the guard
+ * skill on an LLM; `"decision"` = the pin's decision model (a decision case
+ * never falls back to a chat entry).
+ */
+export type EvalGuardMeta = {
+  engine: "chat" | "decision";
+  provider: string | null;
+  model: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  latencyMs: number;
+  /** Decision engine only. */
+  questionsVersion?: string;
+  /** Decision engine only. */
+  probability?: number;
+};
+
+/**
+ * The decision call behind a case of a DECISION skill — `_decision` in
+ * `scoresJson`; absent on every other case.
+ */
+export type EvalDecisionMeta = {
+  provider: string;
+  /** The model id the vendor echoed. */
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  latencyMs: number;
+};
+
+/**
+ * A parsed `EvalRunResult.scoresJson` (see `parseEvalScores`). One flat
+ * namespace: judge-authored dimension keys plus `_`-prefixed platform meta.
+ */
+export type EvalRunResultScores = {
+  /** How the verdict was produced: `"judge"`, `"jev"`, `"exact"` or `"contains"`. */
+  _scoredBy?: string;
+  _judge?: EvalJudgeMeta;
+  _guard?: EvalGuardMeta;
+  _decision?: EvalDecisionMeta;
+  /** The provider transport the case's call used (`"stream"` / `"non_stream"`). */
+  _transport?: string;
+  overall?: { score: number; reasoning: string };
+  [dimension: string]: unknown;
+};
+
+/**
+ * A parsed `EvalRun.metadata` (see `parseEvalRunMetadata`). snake_case keys are
+ * the stored wire; values are as frozen at run creation. Older runs omit keys
+ * that did not exist when they were created.
+ */
+export type EvalRunMetadata = {
+  /** The run's effective model. */
+  model?: string;
+  provider_id?: string | null;
+  judge_model?: string | null;
+  judge_kind?: EvalJudgeKind | null;
+  judge_key_source?: EvalJudgeKeySource | null;
+  judge_integration_id?: string | null;
+  judge_provider_id?: string | null;
+  /** How the run's own LLM credentials were resolved. */
+  credential_source?: string | null;
+  case_timeout_ms?: number;
+  prompt_version?: string | null;
+  [key: string]: unknown;
 };
 
 export type EvalRunResult = {
@@ -1100,6 +1463,14 @@ export type SseEvent =
 export type ModelRole = "main" | "preflight_guard" | "postflight_guard" | "eval_judge";
 
 /**
+ * 0.32.0 — how a role pin runs. `"chat"` (the default; every pin created
+ * before decision models existed) is an LLM call. `"decision"` asks the pinned
+ * integration's decision model (TypeSafe Jev or OpenAI Decisions) fixed yes/no
+ * guard questions — guard roles only.
+ */
+export type RoleModelMode = "chat" | "decision";
+
+/**
  * A single model entry in a role's chain, as returned by the server.
  * Position is server-assigned (0-based, ascending order in the chain).
  */
@@ -1114,17 +1485,44 @@ export type SkillRoleModel = {
   model: string | null;
   /** How the model is resolved at runtime. */
   llmSource: "tenant_default" | "platform" | "pinned";
+  /**
+   * 0.32.0 — how this entry runs (see `RoleModelMode`). Current servers always
+   * send it; optional so responses from older servers still type-check.
+   */
+  mode?: RoleModelMode;
 };
 
 /**
  * A single entry in the chain array sent to `PUT /api/v1/skills/:id/role-models`.
  * The server assigns `skillId`, `role`, and `position` — callers only supply the
  * model-selection fields. Chain length is capped at 4 entries server-side.
+ *
+ * `llmSource: "pinned"` REQUIRES a non-null `llmIntegrationId` — a pinned entry
+ * without one is rejected with 400 `invalid_role_model`. To run a model on the
+ * tenant's default integration, send `llmSource: "tenant_default"` with
+ * `llmIntegrationId: null`.
  */
 export type RoleModelChainEntry = {
   llmIntegrationId: string | null;
   model: string | null;
   llmSource: "tenant_default" | "platform" | "pinned";
+  /**
+   * 0.32.0 — omit to let the server decide: a guard role pinned to a
+   * decision-only integration runs `"decision"`; an entry re-sent with the same
+   * `llmIntegrationId` as a stored entry keeps that entry's mode; anything else
+   * is `"chat"`. When omitted, no `mode` key is sent.
+   *
+   * Rules for `"decision"`: guard roles only (`preflight_guard` /
+   * `postflight_guard`; 422 `decision_mode_not_allowed`); must be
+   * `llmSource: "pinned"` with an `llmIntegrationId` (422
+   * `decision_mode_requires_integration`) on a decision-capable integration
+   * (422 `integration_not_decision_capable`); `model` is `null` (the provider's
+   * default, which the server stores) or a versioned decision model id (422
+   * `invalid_decision_model`); decision entries must come before chat entries
+   * in a chain (422 `decision_after_chat`). A `"chat"` entry cannot pin a
+   * decision-only integration (422 `integration_not_chat_capable`).
+   */
+  mode?: RoleModelMode;
 };
 
 /**
@@ -1148,6 +1546,40 @@ export type LlmCatalogModelPricing = {
   outputUsdPerMTok: number;
   /** ISO date the pricing was last recorded (e.g. "2026-06-01"). */
   asOf: string;
+  /** 0.32.0 — prompt-cache read (cache hit) price per million tokens, when published. */
+  cacheReadUsdPerMTok?: number;
+};
+
+/**
+ * 0.32.0 — a vendor-announced shutdown of a catalogued model id. The entry
+ * stays in the catalog until `shutsDownOn`.
+ */
+export type ModelDeprecation = {
+  /** `YYYY-MM-DD`, as stated by the vendor. */
+  shutsDownOn: string;
+  /** The vendor's named replacement, when it names one. */
+  replacement?: string;
+};
+
+/**
+ * 0.32.0 — what a provider (and so an LLM integration of that provider) can be
+ * used for. `"chat"` runs chat skills; `"decision"` answers typed questions
+ * with probabilities (decision skills, decision-mode guards, the decision
+ * judge).
+ */
+export type ProviderUse = "chat" | "decision";
+
+/**
+ * 0.32.0 — one decision model a decision-capable provider offers.
+ * `versioned` = an id a skill, guard pin or eval run may freeze (never a moving
+ * alias).
+ */
+export type DecisionModelView = {
+  id: string;
+  displayName: string;
+  pricing: LlmCatalogModelPricing;
+  versioned: boolean;
+  deprecation?: ModelDeprecation;
 };
 
 export type LlmCatalogModel = {
@@ -1165,6 +1597,8 @@ export type LlmCatalogModel = {
   contextWindow?: number;
   /** Pricing snapshot, if available. */
   pricing?: LlmCatalogModelPricing;
+  /** 0.32.0 — vendor-announced shutdown, when one is scheduled. */
+  deprecation?: ModelDeprecation;
 };
 
 export type LlmCatalogProvider = {
@@ -1176,6 +1610,13 @@ export type LlmCatalogProvider = {
   docsUrl: string;
   pricingUrl: string;
   models: LlmCatalogModel[];
+  /** 0.32.0 — what this provider can be used for. Absent on older servers. */
+  uses?: ProviderUse[];
+  /**
+   * 0.32.0 — the provider's decision models, when it is decision-capable
+   * (e.g. the OpenAI provider's OpenAI Decisions model).
+   */
+  decisionModels?: DecisionModelView[];
 };
 
 /**
@@ -1213,17 +1654,46 @@ export type LlmCatalog = {
  * tenant is implicit; an adminSecret client passes `{ tenantId }`.
  */
 export type LlmIntegration = {
-  /** Integration id (e.g. `"int_abc123"`). */
+  /** Integration id (e.g. `"int_abc123"`). The server also sends it as `integrationId`. */
   id: string;
+  /** 0.32.0 — the same value as `id` (the server sends both). */
+  integrationId?: string;
   displayName: string;
   /** Provider slug (e.g. `"openai"`, `"anthropic"`). */
   provider: string;
-  /** Provider-namespaced default model id (e.g. `"openai/gpt-5"`). */
-  defaultModel: string;
+  /**
+   * Provider-namespaced default model id (e.g. `"openai/gpt-5"`), or `null`
+   * when none is set. 0.32.0 widened this from `string`: decision-only rows
+   * are always `null`, and a chat row may be.
+   */
+  defaultModel: string | null;
+  /** 0.32.0 — tenant-added model ids on this integration (empty = none). */
+  customModels?: string[];
   /** Whether this is the tenant's default integration. */
   isDefault: boolean;
+  /**
+   * 0.32.0 — what this integration can be used for, derived from its provider.
+   * A row without `"chat"` is never a tenant default, a chat skill's
+   * integration or a `main` role pin. Absent on older servers.
+   */
+  uses?: ProviderUse[];
   /** Masked credential hint — always `"***"`. Never the real key. */
   apiKeyMask: string;
+};
+
+/**
+ * 0.32.0 — options for `llmIntegrations.list()`.
+ */
+export type LlmIntegrationListOptions = {
+  /** Admin-secret clients: the tenant to list for (`X-BaoBox-Tenant-Id`). */
+  tenantId?: string;
+  /**
+   * Which rows to return (`?use=`). The server default is `"chat"` (rows that
+   * can run chat skills); `"decision"` returns decision-capable rows;
+   * `"any"` returns every row. Omitted → no query string is sent. Any other
+   * value is a 400 `INVALID_QUERY`.
+   */
+  use?: "chat" | "decision" | "any";
 };
 
 /**
@@ -1244,14 +1714,9 @@ export type IntegrationModel = {
    */
   reasoningEfforts: string[];
   /** Pricing snapshot, if available from the catalog. */
-  pricing: {
-    /** Cost in USD per million input tokens. */
-    inputUsdPerMTok: number;
-    /** Cost in USD per million output tokens. */
-    outputUsdPerMTok: number;
-    /** ISO date the pricing was last recorded (e.g. `"2026-06-01"`). */
-    asOf: string;
-  } | null;
+  pricing: LlmCatalogModelPricing | null;
+  /** 0.32.0 — vendor-announced shutdown (catalog entries only). */
+  deprecation?: ModelDeprecation;
 };
 
 /**
@@ -1268,6 +1733,11 @@ export type IntegrationModelsView = {
   models: IntegrationModel[];
   /** Non-null when the server could not fetch the live provider model list. */
   providerListError: string | null;
+  /**
+   * 0.32.0 — present when the integration's provider is decision-capable. A
+   * decision-only integration has `models: []` and only these.
+   */
+  decisionModels?: DecisionModelView[];
 };
 
 // ─── ChatStreamRequest (0.9.0) ────────────────────────────────────────────────
