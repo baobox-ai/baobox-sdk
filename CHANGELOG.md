@@ -1,5 +1,110 @@
 # Changelog
 
+## 0.32.0
+
+Decision skills, decision models and eval judge selection — the server's
+v1.2.0 surface.
+
+### Added
+
+- **Decision skills.** `skillKind?: SkillKind` (`"chat" | "decision"`) and
+  `decisionSpec?: DecisionSkillSpec | null` on `Skill` and on
+  `skills.create` / `skills.update` requests, with the `DecisionSkillSpec` /
+  `DecisionSkillQuestion` types (boolean / choice / score questions). The
+  answer type `DecisionSkillOutput` (`baobox.decision.v1`) and its
+  `DecisionSkillBooleanAnswer` / `DecisionSkillChoiceAnswer` /
+  `DecisionSkillScoreAnswer`, the `DECISION_SKILL_SCHEMA_REF` constant, and
+  two pure helpers: `isDecisionSkillOutput(value)` and
+  `decisionOutputOf(response)` (reads `workflow()`'s `output`, the
+  `structured` block in a `chat()` response's `content`, or a `/chat/stream`
+  `assistant_message` frame's `blocks`). Use
+  `bb.workflow<DecisionSkillOutput>(…)` for a typed `output`.
+- **`ChatResponse.content`** — the turn's content blocks as `POST /chat`
+  returns them in `data.content` (text, tool calls / results, `structured`
+  blocks, a decision skill's answer). Absent when the server sends none and on
+  a refused turn. `ChatResponse.blocks` is unchanged: it is set only on a
+  refusal frame, so `refusalSurface` / `blocks` remain the refusal signal.
+- **Role-model `mode`.** `RoleModelMode = "chat" | "decision"`;
+  `SkillRoleModel.mode?` (read) and `RoleModelChainEntry.mode?` (write; omitted
+  → no key is sent and the server infers it).
+- **Integration uses.** `ProviderUse = "chat" | "decision"`;
+  `LlmIntegration.uses?`, `customModels?` and `integrationId?` (the server
+  sends both `id` and `integrationId`). `llmIntegrations.list({ use })` sends
+  `?use=chat|decision|any` — only when `use` is set, so the default request is
+  unchanged (the server then returns chat-capable rows only). New
+  `LlmIntegrationListOptions` type.
+- **Decision models in the catalog.** `DecisionModelView`, `ModelDeprecation`;
+  `LlmCatalogProvider.uses?` / `decisionModels?`;
+  `IntegrationModelsView.decisionModels?`; `deprecation?` on
+  `LlmCatalogModel` and `IntegrationModel`; `cacheReadUsdPerMTok?` on
+  `LlmCatalogModelPricing` (which `IntegrationModel.pricing` now reuses), plus
+  `scheduled?` for a vendor-announced price change not yet in effect.
+- **Eval judge selection.** `RunEvalRequest.judge?` (`"llm" | "jev"`),
+  `judgeModel?` and `judgeIntegrationId?`, forwarded by `eval.run` only when
+  set.
+- **Guard-scoped eval cases.** `guardPhase?: EvalGuardPhase | null`
+  (`"preflight" | "postflight"`) on `EvalCase` and `CreateEvalCaseRequest`;
+  `eval.tests.create` forwards it.
+- **Eval metadata types + parsers.** `EvalJudgeKind`, `EvalJudgeKeySource`,
+  `EvalJudgeMeta` (`_judge`), `EvalGuardMeta` (`_guard`), `EvalDecisionMeta`
+  (`_decision`), `EvalSchemaCheck` (`_schemaCheck`),
+  `EvalJudgeEvidenceViolation` (`_evidenceViolations`), `EvalRunResultScores`
+  (also `_scoredBy`, `_transport`, `_shapeUnwrapped`, `overall`),
+  `EvalRunMetadata` (`judge_kind` / `judge_key_source` are `string | null`
+  with the known values documented — stored loosely, so treat anything but
+  `"jev"` as the LLM judge), and the pure
+  helpers `parseEvalScores(row)` (parses `scoresJson`; `null` when absent or
+  malformed) and `parseEvalRunMetadata(run)` (parses `metadata`; `{}` when
+  absent or malformed). `scoresJson` / `metadata` stay strings on the wire
+  types.
+- New server error codes, documented on the relevant fields:
+  - skills: 422 `decision_skill_kind_immutable`, `invalid_skill_kind`,
+    `decision_skill_requires_pin`, `integration_not_decision_capable`,
+    `integration_not_chat_capable`, `invalid_decision_model`,
+    `decision_skill_no_files`, `decision_skill_no_tools`,
+    `decision_skill_no_sub_skills`, `decision_skill_no_main_pin`,
+    `decision_skill_global_unsupported`, `decision_spec_required`,
+    `decision_spec_not_allowed`, `decision_spec_invalid` (`details.errors[]`);
+    413 `decision_preamble_too_large`;
+  - role models: 422 `decision_mode_not_allowed`,
+    `decision_mode_requires_integration`, `decision_after_chat`,
+    `integration_not_decision_capable`, `integration_not_chat_capable`,
+    `invalid_decision_model`; 400 `invalid_role_model` (`llmSource: "pinned"`
+    without an `llmIntegrationId` — not new, now documented);
+  - running a decision skill: 422 `decision_skill_output_schema_unsupported`
+    (`/workflow` with `outputSchema`), 413 `decision_state_too_large`, 502
+    `decision_failed` (retryable), 503 `decision_skill_unusable` (also returned
+    by `eval.run` for a decision skill whose decision model cannot be used);
+  - `llmIntegrations.list`: 400 `INVALID_QUERY` (unknown `use`);
+  - `eval.run`: 400 `judge_integration_not_allowed`,
+    `judge_model_provider_mismatch`, `judge_integration_requires_llm`,
+    `judge_model_required`; 404 `judge_integration_not_found`; 422
+    `judge_provider_unsupported`, `decision_skill_run_needs_deterministic_cases`,
+    `decision_skill_guard_cases_unsupported`; 503 `no_jev_key`,
+    `no_decision_key`, `NOT_CONFIGURED`, `no_llm_integration`.
+
+### Changed
+
+- `LlmIntegration.defaultModel` is now `string | null` (was `string`). The
+  server has always allowed `null`, and decision-only rows (reachable with
+  `use: "decision" | "any"`) always carry `null`. Code that assigns it to a
+  `string` must handle `null`.
+
+### Notes
+
+- The snake_case inside `DecisionSkillOutput` (`usage.input_tokens`,
+  `latency_ms`) is the payload contract — the same JSON the server returns as
+  the `response` text — not an SDK inconsistency.
+- A skill's kind is fixed at create. A decision skill has no files, tools,
+  sub-skills or `main` role pin, refuses `outputSchema`, starts with its
+  preflight guard off and never runs postflight.
+- `llmTransport` (0.31.0): the server stores an explicit `auto` as `null`, so
+  a skill reads back `null | "stream" | "non_stream"`; `stream` is a request
+  (a provider that cannot stream still runs non-streaming) and
+  `meta.transport` reports what happened.
+- Bump the Skill Studio root `overrides[@baobox/sdk]` pin to `^0.32.0` after
+  publish, or a clean install keeps the old version.
+
 ## 0.31.0
 
 Skill provider transport control, and the transport reported on responses.
