@@ -3726,7 +3726,7 @@ describe("0.32.0 decision skills", () => {
     expect("decisionSpec" in legacy).toBe(false);
   });
 
-  it("chat() maps data.content blocks so decisionOutputOf finds the structured answer", async () => {
+  it("chat() surfaces data.content as content (blocks stays unset) and decisionOutputOf finds the answer", async () => {
     const { bb } = setup(200, {
       response: JSON.stringify(output),
       content: [
@@ -3736,7 +3736,10 @@ describe("0.32.0 decision skills", () => {
       sessionId: "ses_dec",
     });
     const res = await bb.chat({ skillId: "sk_dec", message: "My invoice is wrong again!" });
-    expect(res.blocks).toHaveLength(1);
+    expect(res.content).toHaveLength(1);
+    // `blocks` keeps its 0.31 meaning: refusal frame only.
+    expect(res.blocks).toBeUndefined();
+    expect(res.refusalSurface).toBeUndefined();
     const decision = decisionOutputOf(res);
     expect(decision).toEqual(output);
     expect(decision?.answers.urgent?.type).toBe("boolean");
@@ -3760,13 +3763,38 @@ describe("0.32.0 decision skills", () => {
     const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
     const res = await bb.chat({ skillId: "sk_dec", message: "x" });
     expect(res.blocks).toEqual([{ type: "refusal", reason: "blocked" }]);
+    expect(res.refusalSurface).toBe("preflight");
+    expect("content" in res).toBe(false);
     expect(decisionOutputOf(res)).toBeUndefined();
   });
 
-  it("chat() leaves blocks undefined when the server sends no content", async () => {
+  it("chat() on a normal chat turn sets content and leaves blocks undefined", async () => {
+    const { bb } = setup(200, {
+      response: "hello",
+      content: [{ type: "text", text: "hello" }],
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    const res = await bb.chat({ skillId: "sk_chat", message: "x" });
+    expect(res.content).toEqual([{ type: "text", text: "hello" }]);
+    expect(res.blocks).toBeUndefined();
+    expect(decisionOutputOf(res)).toBeUndefined();
+  });
+
+  it("chat() leaves content and blocks absent when the server sends no content", async () => {
     const { bb } = setup(200, { response: "hi", usage: { inputTokens: 1, outputTokens: 1 } });
     const res = await bb.chat({ skillId: "sk_chat", message: "x" });
     expect(res.blocks).toBeUndefined();
+    expect("content" in res).toBe(false);
+  });
+
+  it("decisionOutputOf reads a /chat/stream assistant_message frame's blocks", () => {
+    const frame = {
+      content: JSON.stringify(output),
+      blocks: [
+        { type: "structured" as const, emit_id: "dec_r1", schema_ref: DECISION_SKILL_SCHEMA_REF, data: output },
+      ],
+    };
+    expect(decisionOutputOf(frame)).toEqual(output);
   });
 
   it("decisionOutputOf reads workflow output and rejects non-decision shapes", async () => {

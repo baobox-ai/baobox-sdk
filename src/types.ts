@@ -147,9 +147,17 @@ export type ChatResponse = {
    * string-sniffing `response` to detect a refusal. See `RefusalBlock`.
    */
   refusalSurface?: RefusalSurface;
-  /** Content blocks for the turn. Today only populated with a single
-   * `RefusalBlock` when `refusalSurface` is set. */
+  /** Refusal blocks: set only on a refused turn, to a single `RefusalBlock`
+   * (alongside `refusalSurface`). Never set on a normal turn — the turn's
+   * own blocks are in `content`. */
   blocks?: ContentBlock[];
+  /**
+   * 0.32.0 — the turn's content blocks as the server sent them in
+   * `data.content` (text, tool calls / results, `structured` blocks — including
+   * a decision skill's `baobox.decision.v1` answer; see `decisionOutputOf`).
+   * Absent when the server sent none, and on a refused turn.
+   */
+  content?: ContentBlock[];
   meta: ResponseMeta;
 };
 
@@ -188,7 +196,12 @@ export type WorkflowRequest = {
 
 export type WorkflowResponse<TOutput = unknown> = {
   response: string;
-  /** Present when `outputSchema` was supplied and BaoBox validated structured output. */
+  /**
+   * Present when `outputSchema` was supplied and BaoBox validated structured
+   * output, or — with no `outputSchema` — when the skill is a decision skill
+   * (the `DecisionSkillOutput` object; a decision skill refuses `outputSchema`
+   * with 422 `decision_skill_output_schema_unsupported`). Absent on a refusal.
+   */
   output?: TOutput;
   /** BaoBox-generated run id (`wflow_…`). Use this to fetch the trace. Absent
    * on a refusal frame — see `refusalSurface`. */
@@ -1269,8 +1282,38 @@ export type EvalRunResultScores = {
   _decision?: EvalDecisionMeta;
   /** The provider transport the case's call used (`"stream"` / `"non_stream"`). */
   _transport?: string;
+  /** Present only on a case with an `outputSchema`: did the raw reply satisfy it. */
+  _schemaCheck?: EvalSchemaCheck;
+  /** `true` only when a `contains` match was reached by unwrapping a root-shape mismatch. */
+  _shapeUnwrapped?: true;
+  /** Judge-cited quotes not found in the graded response (recorded, never acted on). */
+  _evidenceViolations?: EvalJudgeEvidenceViolation[];
   overall?: { score: number; reasoning: string };
+  /**
+   * Judge-authored dimension scores. Every `_`-prefixed key is reserved for
+   * platform meta (dimension names may not start with `_`).
+   */
   [dimension: string]: unknown;
+};
+
+/** `_schemaCheck` in `scoresJson` — score-neutral record of the case's output-schema check. */
+export type EvalSchemaCheck = {
+  /** Did the RAW first-shot reply satisfy the schema? */
+  valid: boolean;
+  /** Present only when a repair pass ran (i.e. `valid` is false). */
+  repaired?: boolean;
+  /** Present only when the repair was deliberately skipped. */
+  repairSkipped?: "reasoning_exhausted_max_tokens";
+  /** Why it failed (truncated): the raw reply's failure, then the repair's. */
+  errors?: string[];
+};
+
+/** One entry of `_evidenceViolations` in `scoresJson`. */
+export type EvalJudgeEvidenceViolation = {
+  /** The dimension whose evidence carried the quote. */
+  dimension: string;
+  /** The quote as the judge wrote it (truncated). */
+  quote: string;
 };
 
 /**
@@ -1283,8 +1326,20 @@ export type EvalRunMetadata = {
   model?: string;
   provider_id?: string | null;
   judge_model?: string | null;
-  judge_kind?: EvalJudgeKind | null;
-  judge_key_source?: EvalJudgeKeySource | null;
+  /**
+   * Which judge graded the run. Known values: `EvalJudgeKind` (`"llm"` |
+   * `"jev"`). Typed as `string` because it is stored loosely: the server treats
+   * anything other than exactly `"jev"` (including absent, on older runs) as
+   * `"llm"`, and so should you.
+   */
+  judge_kind?: string | null;
+  /**
+   * Whose key graded the run. Known values: `EvalJudgeKeySource`. `null` /
+   * absent on an LLM-judged run graded on the run's own key (and on runs
+   * created before the field existed). Typed as `string`: treat an
+   * unrecognised value as legacy.
+   */
+  judge_key_source?: string | null;
   judge_integration_id?: string | null;
   judge_provider_id?: string | null;
   /** How the run's own LLM credentials were resolved. */
@@ -1548,6 +1603,16 @@ export type LlmCatalogModelPricing = {
   asOf: string;
   /** 0.32.0 — prompt-cache read (cache hit) price per million tokens, when published. */
   cacheReadUsdPerMTok?: number;
+  /**
+   * 0.32.0 — a vendor-announced price change not yet in effect. The numbers
+   * above stay authoritative until `effectiveFrom` (`YYYY-MM-DD`).
+   */
+  scheduled?: {
+    effectiveFrom: string;
+    inputUsdPerMTok: number;
+    outputUsdPerMTok: number;
+    cacheReadUsdPerMTok?: number;
+  };
 };
 
 /**

@@ -992,7 +992,8 @@ export class BaoBoxClient {
     // answers 200 with a single refusal frame that omits `usage` entirely
     // (see baobox/src/middleware/error-handler.ts). Default to zeros rather
     // than throwing so a refused turn round-trips like any other response;
-    // callers branch on `refusalSurface`/`blocks`, not on a crash.
+    // callers branch on `refusalSurface` (or the refusal `blocks`), not on a
+    // crash. A normal turn's own blocks arrive as `content` (0.32.0).
     const usage = body.data.usage ?? {};
     return {
       response: body.data.response,
@@ -1001,12 +1002,12 @@ export class BaoBoxClient {
         outputTokens: usage.outputTokens ?? usage.output_tokens ?? 0,
       },
       sessionId: body.data.sessionId ?? body.data.session_id,
-      // 0.32.0 — fall back to `content` when it is a block array: that is
-      // where `POST /chat` puts a turn's blocks (e.g. a decision skill's
-      // `structured` answer). Before 0.32.0 `blocks` was only ever set on a
-      // refusal frame.
-      blocks:
-        body.data.blocks ?? (Array.isArray(body.data.content) ? body.data.content : undefined),
+      // `blocks` keeps its meaning: set only on the refusal frame.
+      blocks: body.data.blocks,
+      // 0.32.0 — a normal turn's blocks (e.g. a decision skill's `structured`
+      // answer). The refusal frame's `content` is a string, so only an array is
+      // surfaced.
+      ...(Array.isArray(body.data.content) ? { content: body.data.content } : {}),
       refusalSurface: body.refusalSurface,
       meta: body.meta,
     };
@@ -1050,8 +1051,9 @@ export class BaoBoxClient {
     // answers 200 with a single refusal frame that omits `usage` (and
     // `runId`) entirely (see baobox/src/middleware/error-handler.ts).
     // Default to zeros rather than throwing so a refused turn round-trips
-    // like any other response; callers branch on `refusalSurface`/`blocks`,
-    // not on a crash. `workflowStructured()` gives refusals a typed error.
+    // like any other response; callers branch on `refusalSurface` (or the
+    // refusal `blocks`), not on a crash. `workflowStructured()` gives refusals
+    // a typed error.
     const usage = body.data.usage ?? {};
     return {
       response: body.data.response,
@@ -2740,17 +2742,22 @@ export function isDecisionSkillOutput(value: unknown): value is DecisionSkillOut
 /**
  * Extract a decision skill's answer from a response:
  * - `workflow()` → `output`, when it is a decision output;
- * - `chat()` (or a `/chat/stream` `assistant_message` frame's data) → the
- *   `data` of the first `structured` block whose `schema_ref` is
- *   `DECISION_SKILL_SCHEMA_REF`.
+ * - `chat()` → the `data` of the first `structured` block in `content` whose
+ *   `schema_ref` is `DECISION_SKILL_SCHEMA_REF`;
+ * - a `/chat/stream` `assistant_message` frame's `data` → the same block in
+ *   its `blocks`.
  * Returns `undefined` for a chat skill's response or a refusal.
  */
 export function decisionOutputOf(
-  res: { output?: unknown; blocks?: ContentBlock[] } | null | undefined,
+  res:
+    | { output?: unknown; content?: ContentBlock[] | string; blocks?: ContentBlock[] }
+    | null
+    | undefined,
 ): DecisionSkillOutput | undefined {
   if (!res) return undefined;
   if (isDecisionSkillOutput(res.output)) return res.output;
-  for (const block of res.blocks ?? []) {
+  const content = Array.isArray(res.content) ? res.content : [];
+  for (const block of [...content, ...(res.blocks ?? [])]) {
     if (isDecisionBlock(block)) return block.data;
   }
   return undefined;
