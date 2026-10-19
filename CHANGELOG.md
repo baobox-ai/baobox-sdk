@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.32.1
+
+Fixes `skills.roleModels.get()` returning the wrong shape.
+
+### Fixed
+
+- `skills.roleModels.get()` returned the server's wrapper object
+  `{ skillId, roles }` instead of the role → chain map it is typed as
+  (`SkillRoleModelsMap`), since 0.19.0. Reading `map.main`,
+  `map.preflight_guard` etc. gave `undefined`, so every role chain looked
+  empty even when overrides were configured. It now returns `data.roles`: all
+  four `ModelRole` keys are always present, and an empty array means the role
+  inherits the tenant default. The return type is unchanged; `skillId` is not
+  surfaced (the caller already has it, and every chain entry carries it).
+  `skills.roleModels.put()` was not affected.
+  If your code worked around this by reading `.roles` from the result, remove
+  that step: on 0.32.1 the result is already the role map.
+
 ## 0.32.0
 
 Decision skills, decision models and eval judge selection — the server's

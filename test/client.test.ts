@@ -3184,6 +3184,8 @@ describe("skill reasoningEffort (#301, llmParams wire shape)", () => {
 // ─── skills.roleModels (0.19.0) ───────────────────────────────────────────────
 
 describe("skills.roleModels", () => {
+  // Real server shape for GET /api/v1/skills/:id/role-models:
+  // `{ data: { skillId, roles } }`, with all four role keys always present.
   const rawRoleModelsMap = {
     main: [
       {
@@ -3193,12 +3195,14 @@ describe("skills.roleModels", () => {
         llmIntegrationId: "int_abc",
         model: "openai/gpt-5",
         llmSource: "pinned",
+        mode: "chat",
       },
     ],
     preflight_guard: [],
     postflight_guard: [],
     eval_judge: [],
   };
+  const rawRoleModelsResponse = { skillId: "sk_1", roles: rawRoleModelsMap };
 
   it("roleModels.get hits GET /api/v1/skills/:id/role-models and returns unwrapped map", async () => {
     const seen: { url?: string; method?: string; auth?: string } = {};
@@ -3207,7 +3211,7 @@ describe("skills.roleModels", () => {
       seen.method = init.method;
       seen.auth = (init.headers as Record<string, string>).authorization;
       return jsonResponse(200, {
-        data: rawRoleModelsMap,
+        data: rawRoleModelsResponse,
         metadata: { requestId: "r_rm1", latencyMs: 3 },
       });
     });
@@ -3228,6 +3232,31 @@ describe("skills.roleModels", () => {
     expect(map.preflight_guard).toEqual([]);
   });
 
+  it("roleModels.get unwraps data.roles — returns the role map, not { skillId, roles }", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: rawRoleModelsResponse,
+        metadata: { requestId: "r_rm5", latencyMs: 1 },
+      }),
+    );
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "skb_k", fetch });
+
+    const map = await bb.skills.roleModels.get("sk_1");
+
+    expect(map).toEqual(rawRoleModelsMap);
+    expect(Object.keys(map).sort()).toEqual([
+      "eval_judge",
+      "main",
+      "postflight_guard",
+      "preflight_guard",
+    ]);
+    expect(map).not.toHaveProperty("roles");
+    expect(map).not.toHaveProperty("skillId");
+    expect(map.main[0]?.llmSource).toBe("pinned");
+    expect(map.main[0]?.mode).toBe("chat");
+    expect(map.eval_judge).toEqual([]);
+  });
+
   it("roleModels.get uses apiKey when no adminSecret and sends tenant header", async () => {
     const seen: { url?: string; auth?: string; tenant?: string } = {};
     const fetch = fakeFetch((url, init) => {
@@ -3236,7 +3265,7 @@ describe("skills.roleModels", () => {
       seen.auth = headers.authorization;
       seen.tenant = headers["X-BaoBox-Tenant-Id"];
       return jsonResponse(200, {
-        data: rawRoleModelsMap,
+        data: rawRoleModelsResponse,
         metadata: { requestId: "r_rm2", latencyMs: 2 },
       });
     });
@@ -3256,6 +3285,7 @@ describe("skills.roleModels", () => {
   it("roleModels.put hits PUT /api/v1/skills/:id/role-models with the right body and returns unwrapped result", async () => {
     const seen: { url?: string; method?: string; body?: unknown; auth?: string } = {};
     const rawPutResponse = {
+      skillId: "sk_1",
       role: "postflight_guard",
       chain: [
         {
@@ -3265,6 +3295,7 @@ describe("skills.roleModels", () => {
           llmIntegrationId: null,
           model: "openai/gpt-5-mini",
           llmSource: "platform",
+          mode: "chat",
         },
       ],
     };
@@ -3309,7 +3340,7 @@ describe("skills.roleModels", () => {
       seen.auth = headers.authorization;
       seen.tenant = headers["X-BaoBox-Tenant-Id"];
       return jsonResponse(200, {
-        data: { role: "main", chain: [] },
+        data: { skillId: "sk_1", role: "main", chain: [] },
         metadata: { requestId: "r_rm4", latencyMs: 1 },
       });
     });
@@ -3844,6 +3875,7 @@ describe("0.32.0 role-model mode", () => {
 
   it("roleModels.put forwards mode: decision and reads mode back", async () => {
     const { seen, bb } = setup({
+      skillId: "sk_1",
       role: "preflight_guard",
       chain: [
         {
@@ -3871,7 +3903,7 @@ describe("0.32.0 role-model mode", () => {
   });
 
   it("a chain entry without mode sends no mode key", async () => {
-    const { seen, bb } = setup({ role: "preflight_guard", chain: [] });
+    const { seen, bb } = setup({ skillId: "sk_1", role: "preflight_guard", chain: [] });
     await bb.skills.roleModels.put("sk_1", {
       role: "preflight_guard",
       chain: [{ llmIntegrationId: null, model: "model-x", llmSource: "tenant_default" }],
