@@ -643,9 +643,10 @@ export class BaoBoxClient {
      */
     roleModels: {
       /**
-       * Fetch the full role → chain map for a skill.
-       * Requires `skills:read`. Tenant-scoped via `options.tenantId` or the
-       * apiKey's implicit tenant.
+       * Fetch the full role → chain map for a skill. Every `ModelRole` key is
+       * present; an empty array means the role has no override and inherits the
+       * tenant default. Requires `skills:read`. Tenant-scoped via
+       * `options.tenantId` or the apiKey's implicit tenant.
        */
       get: (skillId: string, options?: SkillScopeOptions) => Promise<SkillRoleModelsMap>;
       /**
@@ -1647,13 +1648,16 @@ export class BaoBoxClient {
     skillId: string,
     options?: SkillScopeOptions,
   ): Promise<SkillRoleModelsMap> {
-    const body = await this.requestSkills<SkillRoleModelsMap>(
+    // 0.32.1 — the server wraps the map: `{ data: { skillId, roles } }`, and
+    // `roles` always carries all four role keys (empty array = no override).
+    // Only `roles` is returned so the public type stays a pure role map.
+    const body = await this.requestSkills<{ skillId: string; roles: SkillRoleModelsMap }>(
       "GET",
       `/api/v1/skills/${encodeURIComponent(skillId)}/role-models`,
       undefined,
       tenantScopeHeaders(options),
     );
-    return body.data;
+    return body.data.roles;
   }
 
   private async putSkillRoleModel(
