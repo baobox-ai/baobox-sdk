@@ -71,6 +71,7 @@ import type {
   SetSkillSecretResult,
   Skill,
   SkillLlmParams,
+  SkillLlmTransport,
   SkillLlmSource,
   SkillCreateRequest,
   SkillFile,
@@ -129,6 +130,8 @@ type RawMetadata = {
   latencyMs?: number;
   latency_ms?: number;
   model?: string;
+  // 0.31.0 — which provider transport the server used for the call.
+  transport?: "stream" | "non_stream";
   // B1 (epic #170 §3.7) — snake_case only on the wire (see error-handler.ts);
   // not part of the Phase-1/3 camelCase migration, it's a new field.
   refusal_surface?: RefusalSurface;
@@ -203,6 +206,8 @@ type RawSkill = {
   llmParams?: SkillLlmParams | null;
   llmIntegrationId?: string | null;
   llmSource?: SkillLlmSource;
+  // 0.31.0 — provider transport; optional so older servers don't break the mapper.
+  llmTransport?: SkillLlmTransport | null;
   sourceUrl: string | null;
   tenantId: string | null;
   // η.1 / B-3 — per-skill attachment policy. Optional on the SDK side so a
@@ -2215,6 +2220,7 @@ function mapResponseMeta(metadata?: RawMetadata): ResponseMeta {
     requestId: metadata.requestId ?? metadata.request_id ?? "",
     latencyMs: metadata.latencyMs ?? metadata.latency_ms ?? 0,
     model: metadata.model,
+    ...(metadata.transport !== undefined ? { transport: metadata.transport } : {}),
     trace: metadata.trace?.map((trace) => ({
       toolName: trace.toolName ?? trace.tool_name ?? "",
       input: trace.input,
@@ -2295,6 +2301,7 @@ function mapSkill(raw: RawSkill): Skill {
     ...("llmParams" in raw ? { llmParams: raw.llmParams } : {}),
     ...("llmIntegrationId" in raw ? { llmIntegrationId: raw.llmIntegrationId } : {}),
     ...("llmSource" in raw ? { llmSource: raw.llmSource } : {}),
+    ...("llmTransport" in raw ? { llmTransport: raw.llmTransport } : {}),
     sourceUrl: raw.sourceUrl,
     tenantId: raw.tenantId,
     createdAt: raw.createdAt,
@@ -2517,6 +2524,8 @@ function buildSkillWriteBody(req: SkillCreateRequest | SkillUpdateRequest): Reco
           ? null
           : { reasoningEffort: req.reasoningEffort },
     llmIntegrationId: req.llmIntegrationId,
+    // 0.31.0: llmTransport forwarded when set (null clears back to auto).
+    llmTransport: req.llmTransport,
     sourceUrl: req.sourceUrl,
     files: req.files,
   });

@@ -1036,6 +1036,30 @@ describe("workflow", () => {
     expect(r.meta.requestId).toBe("r_wf");
   });
 
+  it("surfaces metadata.transport on the response meta", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: { response: "ok", runId: "wflow_t", usage: { inputTokens: 1, outputTokens: 1 } },
+        metadata: { requestId: "r_t", latencyMs: 5, transport: "stream" },
+      }),
+    );
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    const r = await bb.workflow({ skill: "sk", clientId: "c", requestId: "q", input: "hi" });
+    expect(r.meta.transport).toBe("stream");
+  });
+
+  it("omits meta.transport when the server does not send it", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(200, {
+        data: { response: "ok", runId: "wflow_t2", usage: { inputTokens: 1, outputTokens: 1 } },
+        metadata: { requestId: "r_t2", latencyMs: 5 },
+      }),
+    );
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    const r = await bb.workflow({ skill: "sk", clientId: "c", requestId: "q", input: "hi" });
+    expect("transport" in r.meta).toBe(false);
+  });
+
   it("forwards output_schema and maps structured output", async () => {
     let seenBody: Record<string, unknown> = {};
     const fetch = fakeFetch((_url, init) => {
@@ -3110,6 +3134,7 @@ describe("skill reasoningEffort (#301, llmParams wire shape)", () => {
       maxTokens: 10,
       reasoningEffort: "high" as const,
       llmIntegrationId: "int_1",
+      llmTransport: "stream" as const,
       sourceUrl: "https://example.com/skill.md",
       files: [{ path: "a.md", content: "x" }],
       tools: ["tool_1"],
@@ -3122,7 +3147,7 @@ describe("skill reasoningEffort (#301, llmParams wire shape)", () => {
     for (const key of Object.keys(update.seen.body)) expect(fixture.update).toContain(key);
     // Every convenience/modelled field was actually exercised.
     expect(Object.keys(create.seen.body).sort()).toEqual(
-      ["name", "description", "systemPrompt", "model", "temperature", "maxTokens", "llmParams", "llmIntegrationId", "sourceUrl", "files"].sort(),
+      ["name", "description", "systemPrompt", "model", "temperature", "maxTokens", "llmParams", "llmIntegrationId", "llmTransport", "sourceUrl", "files"].sort(),
     );
     // `tools` is an SDK convenience field reconciled via separate routes.
     expect("tools" in create.seen.body).toBe(false);
@@ -3493,5 +3518,62 @@ describe("llmIntegrations.listModels (0.20.0)", () => {
 
     expect(view.models).toHaveLength(0);
     expect(view.providerListError).toBe("upstream timeout");
+  });
+});
+
+describe("skill llmTransport", () => {
+  const rawSkillBase = {
+    skillId: "sk_tr",
+    name: "TransportSkill",
+    description: "desc",
+    systemPrompt: "prompt",
+    model: "model-x",
+    temperature: 0.5,
+    maxTokens: 2048,
+    llmParams: null,
+    sourceUrl: null,
+    tenantId: null,
+    createdAt: "2026-10-10T00:00:00Z",
+    updatedAt: "2026-10-10T00:00:00Z",
+  };
+
+  function setup(status: number, data: Record<string, unknown>) {
+    const seen: { body: Record<string, unknown> } = { body: {} };
+    const fetch = fakeFetch((_url, init) => {
+      seen.body = JSON.parse(init.body as string) as Record<string, unknown>;
+      return jsonResponse(status, { data, metadata: { requestId: "r_tr", latencyMs: 1 } });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", adminSecret: "adm", fetch });
+    return { seen, bb };
+  }
+
+  it("skills.create forwards llmTransport and reads it back", async () => {
+    const { seen, bb } = setup(201, { ...rawSkillBase, llmTransport: "non_stream" });
+    const skill = await bb.skills.create({ name: "TransportSkill", systemPrompt: "prompt", llmTransport: "non_stream" });
+    expect(seen.body.llmTransport).toBe("non_stream");
+    expect(skill.llmTransport).toBe("non_stream");
+  });
+
+  it("skills.update with llmTransport: null sends null to clear", async () => {
+    const { seen, bb } = setup(200, { ...rawSkillBase, llmTransport: null });
+    const skill = await bb.skills.update("sk_tr", { llmTransport: null });
+    expect("llmTransport" in seen.body).toBe(true);
+    expect(seen.body.llmTransport).toBeNull();
+    expect(skill.llmTransport).toBeNull();
+  });
+
+  it("omits llmTransport when undefined, and does not touch llmParams", async () => {
+    const { seen, bb } = setup(200, { ...rawSkillBase });
+    const skill = await bb.skills.update("sk_tr", { reasoningEffort: "high" });
+    expect("llmTransport" in seen.body).toBe(false);
+    expect(seen.body.llmParams).toEqual({ reasoningEffort: "high" });
+    expect("llmTransport" in skill).toBe(false);
+  });
+
+  it("llmTransport-only update sends no llmParams", async () => {
+    const { seen, bb } = setup(200, { ...rawSkillBase, llmTransport: "auto" });
+    await bb.skills.update("sk_tr", { llmTransport: "auto" });
+    expect(seen.body.llmTransport).toBe("auto");
+    expect("llmParams" in seen.body).toBe(false);
   });
 });

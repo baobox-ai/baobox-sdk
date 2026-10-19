@@ -22,6 +22,11 @@ export type ResponseMeta = {
   requestId: string;
   latencyMs: number;
   model?: string;
+  /**
+   * Which provider transport the server actually used for the call
+   * (`/workflow` and `/chat`). Absent on servers that predate it.
+   */
+  transport?: "stream" | "non_stream";
   trace?: ToolTrace[];
 };
 
@@ -487,6 +492,19 @@ export type SkillLlmParams = {
   reasoningEffort?: ReasoningEffort;
 };
 
+/**
+ * How the server talks to the model provider for a skill's calls.
+ *
+ * - `auto` (default): streams from the provider internally when the call's
+ *   effective max tokens is >= 15 000, otherwise does not.
+ * - `stream`: always streams from the provider internally.
+ * - `non_stream`: never does. Very long generations (several minutes) may then
+ *   be cut before the provider responds.
+ *
+ * This is internal to the server; the SDK response shape is the same either way.
+ */
+export type SkillLlmTransport = "auto" | "stream" | "non_stream";
+
 /** Where a skill's LLM credentials resolve from. */
 export type SkillLlmSource = "tenant_default" | "platform" | "pinned";
 
@@ -512,6 +530,12 @@ export type SkillCreateRequest = {
    * otherwise).
    */
   llmIntegrationId?: string | null;
+  /**
+   * Provider transport for this skill's calls. See `SkillLlmTransport`. On
+   * update, `null` clears a previously set value back to `auto` (on create it
+   * is the same as omitting it).
+   */
+  llmTransport?: SkillLlmTransport | null;
   sourceUrl?: string;
   files?: SkillFileInput[];
   /**
@@ -558,6 +582,8 @@ export type Skill = {
   llmIntegrationId?: string | null;
   /** Credential source the server resolved for this skill. */
   llmSource?: SkillLlmSource;
+  /** Provider transport configured on this skill (`null` = `auto`). */
+  llmTransport?: SkillLlmTransport | null;
   sourceUrl: string | null;
   tenantId: string | null;
   createdAt: string;
