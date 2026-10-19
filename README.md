@@ -195,7 +195,7 @@ const res = await bb.chat({
 });
 ```
 
-Returns `{ response, usage: { inputTokens, outputTokens }, sessionId, blocks, meta }` where `blocks` holds the turn's content blocks when the server sent any (a guardrail refusal, a `structured` block, a decision skill's answer), and `meta` carries `requestId`, `latencyMs`, `model`, an optional `transport` (`"stream"` / `"non_stream"` — how BaoBox called the model provider, 0.31.0+) and an optional `trace` array.
+Returns `{ response, usage: { inputTokens, outputTokens }, sessionId, content, blocks, refusalSurface, meta }` where `content` (0.32.0+) holds the turn's content blocks when the server sent any (text, tool calls, `structured` blocks, a decision skill's answer); `blocks` and `refusalSurface` are set only on a guardrail refusal (`blocks` = a single `refusal` block); and `meta` carries `requestId`, `latencyMs`, `model`, an optional `transport` (`"stream"` / `"non_stream"` — how BaoBox called the model provider, 0.31.0+) and an optional `trace` array.
 
 ### Workflow (single-turn, stateless) — added in 0.3.0
 
@@ -432,7 +432,7 @@ const res = await bb.workflow<DecisionSkillOutput>({
 });
 res.output?.answers.urgent;   // { type: "boolean", value: true, probability: 0.912, threshold: 0.5 }
 
-// /chat: the answer is a `structured` block (schema_ref "baobox.decision.v1").
+// /chat: the answer is a `structured` block in `turn.content` (schema_ref "baobox.decision.v1").
 const turn = await bb.chat({ skillId: skill.id, message: "My invoice is wrong again!" });
 decisionOutputOf(turn)?.answers.topic;   // { type: "choice", value: "billing", ... }
 ```

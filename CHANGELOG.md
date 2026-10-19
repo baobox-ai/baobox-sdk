@@ -15,10 +15,15 @@ v1.2.0 surface.
   `DecisionSkillBooleanAnswer` / `DecisionSkillChoiceAnswer` /
   `DecisionSkillScoreAnswer`, the `DECISION_SKILL_SCHEMA_REF` constant, and
   two pure helpers: `isDecisionSkillOutput(value)` and
-  `decisionOutputOf(response)` (reads `workflow()`'s `output`, or the
-  `structured` block of a `chat()` response / `/chat/stream`
-  `assistant_message`). Use `bb.workflow<DecisionSkillOutput>(…)` for a typed
-  `output`.
+  `decisionOutputOf(response)` (reads `workflow()`'s `output`, the
+  `structured` block in a `chat()` response's `content`, or a `/chat/stream`
+  `assistant_message` frame's `blocks`). Use
+  `bb.workflow<DecisionSkillOutput>(…)` for a typed `output`.
+- **`ChatResponse.content`** — the turn's content blocks as `POST /chat`
+  returns them in `data.content` (text, tool calls / results, `structured`
+  blocks, a decision skill's answer). Absent when the server sends none and on
+  a refused turn. `ChatResponse.blocks` is unchanged: it is set only on a
+  refusal frame, so `refusalSurface` / `blocks` remain the refusal signal.
 - **Role-model `mode`.** `RoleModelMode = "chat" | "decision"`;
   `SkillRoleModel.mode?` (read) and `RoleModelChainEntry.mode?` (write; omitted
   → no key is sent and the server infers it).
@@ -32,7 +37,8 @@ v1.2.0 surface.
   `LlmCatalogProvider.uses?` / `decisionModels?`;
   `IntegrationModelsView.decisionModels?`; `deprecation?` on
   `LlmCatalogModel` and `IntegrationModel`; `cacheReadUsdPerMTok?` on
-  `LlmCatalogModelPricing` (which `IntegrationModel.pricing` now reuses).
+  `LlmCatalogModelPricing` (which `IntegrationModel.pricing` now reuses), plus
+  `scheduled?` for a vendor-announced price change not yet in effect.
 - **Eval judge selection.** `RunEvalRequest.judge?` (`"llm" | "jev"`),
   `judgeModel?` and `judgeIntegrationId?`, forwarded by `eval.run` only when
   set.
@@ -41,7 +47,12 @@ v1.2.0 surface.
   `eval.tests.create` forwards it.
 - **Eval metadata types + parsers.** `EvalJudgeKind`, `EvalJudgeKeySource`,
   `EvalJudgeMeta` (`_judge`), `EvalGuardMeta` (`_guard`), `EvalDecisionMeta`
-  (`_decision`), `EvalRunResultScores`, `EvalRunMetadata`, and the pure
+  (`_decision`), `EvalSchemaCheck` (`_schemaCheck`),
+  `EvalJudgeEvidenceViolation` (`_evidenceViolations`), `EvalRunResultScores`
+  (also `_scoredBy`, `_transport`, `_shapeUnwrapped`, `overall`),
+  `EvalRunMetadata` (`judge_kind` / `judge_key_source` are `string | null`
+  with the known values documented — stored loosely, so treat anything but
+  `"jev"` as the LLM judge), and the pure
   helpers `parseEvalScores(row)` (parses `scoresJson`; `null` when absent or
   malformed) and `parseEvalRunMetadata(run)` (parses `metadata`; `{}` when
   absent or malformed). `scoresJson` / `metadata` stay strings on the wire
@@ -62,15 +73,15 @@ v1.2.0 surface.
     without an `llmIntegrationId` — not new, now documented);
   - running a decision skill: 422 `decision_skill_output_schema_unsupported`
     (`/workflow` with `outputSchema`), 413 `decision_state_too_large`, 502
-    `decision_failed` (retryable), 503 `decision_skill_unusable`;
+    `decision_failed` (retryable), 503 `decision_skill_unusable` (also returned
+    by `eval.run` for a decision skill whose decision model cannot be used);
   - `llmIntegrations.list`: 400 `INVALID_QUERY` (unknown `use`);
   - `eval.run`: 400 `judge_integration_not_allowed`,
     `judge_model_provider_mismatch`, `judge_integration_requires_llm`,
     `judge_model_required`; 404 `judge_integration_not_found`; 422
     `judge_provider_unsupported`, `decision_skill_run_needs_deterministic_cases`,
     `decision_skill_guard_cases_unsupported`; 503 `no_jev_key`,
-    `no_decision_key`, `NOT_CONFIGURED`, `no_llm_integration`,
-    `decision_skill_unusable`.
+    `no_decision_key`, `NOT_CONFIGURED`, `no_llm_integration`.
 
 ### Changed
 
@@ -78,11 +89,6 @@ v1.2.0 surface.
   server has always allowed `null`, and decision-only rows (reachable with
   `use: "decision" | "any"`) always carry `null`. Code that assigns it to a
   `string` must handle `null`.
-- `chat()` now fills `ChatResponse.blocks` from the response's `content` block
-  array. `POST /chat` has always returned a turn's blocks as `content`, so
-  `blocks` was only ever set on a guardrail refusal frame; it now also carries
-  text / tool / `structured` blocks (including a decision skill's answer).
-  Absent when the server sends no blocks.
 
 ### Notes
 
