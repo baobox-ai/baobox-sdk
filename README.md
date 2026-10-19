@@ -195,7 +195,7 @@ const res = await bb.chat({
 });
 ```
 
-Returns `{ response, usage: { inputTokens, outputTokens }, sessionId, meta }` where `meta` carries `requestId`, `latencyMs`, `model`, and an optional `trace` array.
+Returns `{ response, usage: { inputTokens, outputTokens }, sessionId, blocks, meta }` where `blocks` holds the turn's content blocks when the server sent any (a guardrail refusal, a `structured` block, a decision skill's answer), and `meta` carries `requestId`, `latencyMs`, `model`, an optional `transport` (`"stream"` / `"non_stream"` — how BaoBox called the model provider, 0.31.0+) and an optional `trace` array.
 
 ### Workflow (single-turn, stateless) — added in 0.3.0
 
@@ -217,7 +217,7 @@ console.log(res.response);   // skill output
 console.log(res.runId);      // "wflow_..." — handle for the run's event timeline
 ```
 
-Returns `{ response, runId, usage, meta }`. `clientId` and `requestId` land on the BaoBox `call_logs` row (as `client_id` and `external_request_id`) so you can join workflow runs back to your own request log. The skill is responsible for self-routing — there is no `action` discriminator on the request.
+Returns `{ response, runId, usage, meta }` (`meta` as for `chat()`, including `transport`). `clientId` and `requestId` land on the BaoBox `call_logs` row (as `client_id` and `external_request_id`) so you can join workflow runs back to your own request log. The skill is responsible for self-routing — there is no `action` discriminator on the request.
 
 ### Workflow (structured output) — added in 0.6.0
 
@@ -386,6 +386,97 @@ const tool = await bb.tools.create({
 const run = await bb.eval.run({ skillId: skill.id });
 const stats = await bb.admin.stats.get();
 ```
+
+### Provider transport — added in 0.31.0
+
+`llmTransport` on `skills.create` / `skills.update` chooses how BaoBox calls the model provider for that skill: `"auto"` (default — streams from the provider when the call's max tokens is 15 000 or more), `"stream"` (requests streaming on every call; a provider that cannot stream still runs non-streaming), or `"non_stream"`. `null` on update goes back to `auto`. The server stores `auto` as `null`, so a skill reads back `null | "stream" | "non_stream"`. What actually happened is reported per call as `res.meta.transport`.
+
+```typescript
+await bb.skills.update("sk_report", { llmTransport: "stream" });
+const res = await bb.workflow({ skill: "sk_report", clientId: "c", requestId: "r1", input: "..." });
+res.meta.transport; // "stream" | "non_stream" | undefined (older servers)
+```
+
+### Decision skills — added in 0.32.0
+
+A decision skill answers a fixed list of typed questions (yes/no, pick-one, score) about the message it is given, on a decision model (TypeSafe Jev or OpenAI Decisions), and returns one JSON object instead of text. It must pin a decision-capable integration (`llmIntegrations.list({ use: "decision" })`); `model` is a versioned decision model id or omitted for the provider's default; `systemPrompt` is a preamble of at most 4000 characters. The kind cannot change after create.
+
+```typescript
+import { decisionOutputOf, type DecisionSkillOutput } from "@baobox/sdk";
+
+const skill = await bb.skills.create({
+  name: "Inbound triage",
+  systemPrompt: "You triage inbound customer email.",
+  skillKind: "decision",
+  llmIntegrationId: "int_decision",            // a TypeSafe Jev or OpenAI integration
+  decisionSpec: {
+    version: 1,
+    questions: [
+      { id: "urgent", type: "boolean", prompt: "Does this need a reply today?" },
+      {
+        id: "topic",
+        type: "choice",
+        prompt: "What is it about?",
+        options: [
+          { value: "billing", description: "Invoices, payments, refunds" },
+          { value: "other", description: "Anything else" },
+        ],
+      },
+    ],
+  },
+});
+
+// /workflow: `output` is the answer object.
+const res = await bb.workflow<DecisionSkillOutput>({
+  skill: skill.id, clientId: "c", requestId: "r1", input: "My invoice is wrong again!",
+});
+res.output?.answers.urgent;   // { type: "boolean", value: true, probability: 0.912, threshold: 0.5 }
+
+// /chat: the answer is a `structured` block (schema_ref "baobox.decision.v1").
+const turn = await bb.chat({ skillId: skill.id, message: "My invoice is wrong again!" });
+decisionOutputOf(turn)?.answers.topic;   // { type: "choice", value: "billing", ... }
+```
+
+`DecisionSkillOutput` is `{ kind: "decision", version: 1, skillId, provider, model, answers, usage: { input_tokens, output_tokens }, latency_ms }`; the snake_case inside it is the payload contract, not an envelope field. `answers` follow the spec's question order. A decision skill refuses `outputSchema`, files, tools, sub-skills and a `main` role-model pin (422s), and its postflight guard never runs.
+
+### Decision models, integrations and role-model `mode` — added in 0.32.0
+
+```typescript
+// Integrations: default = rows that can run chat skills; ask for others with `use`.
+const decisionRows = await bb.llmIntegrations.list({ use: "decision" }); // or "any"
+decisionRows[0]?.uses;          // ["decision"]
+decisionRows[0]?.defaultModel;  // null — `defaultModel` is now `string | null`
+
+// Models of a decision-capable integration.
+const view = await bb.llmIntegrations.listModels("int_decision");
+view.decisionModels;            // [{ id, displayName, pricing, versioned, deprecation? }]
+
+// Run the preflight guard on a decision model.
+await bb.skills.roleModels.put("sk_support", {
+  role: "preflight_guard",
+  chain: [{ llmIntegrationId: "int_decision", model: null, llmSource: "pinned", mode: "decision" }],
+});
+```
+
+`mode: "decision"` is accepted on `preflight_guard` / `postflight_guard` only, must pin a decision-capable integration, and must come before any chat entries in the chain. Omit `mode` to let the server keep or infer it. Note that `llmSource: "pinned"` always requires a non-null `llmIntegrationId` (400 `invalid_role_model`); to run a model on the tenant's default integration send `{ llmIntegrationId: null, model, llmSource: "tenant_default" }`.
+
+### Eval judge selection — added in 0.32.0
+
+```typescript
+import { parseEvalScores, parseEvalRunMetadata } from "@baobox/sdk";
+
+// LLM judge on one of the tenant's own integrations (tenant apiKey only).
+await bb.eval.run({ skillId: "sk_support", judgeIntegrationId: "int_judge", judgeModel: "gpt-5.4" });
+
+// Decision-model judge (TypeSafe Jev by default; OpenAI Decisions with an OpenAI row).
+const started = await bb.eval.run({ skillId: "sk_support", judge: "jev" });
+
+const run = await bb.eval.runs.get(started.runId);
+parseEvalRunMetadata(run).judge_kind;            // "jev"
+parseEvalScores(run.results[0] ?? null)?._judge; // { provider, model, inputTokens, ... }
+```
+
+`judge` defaults to `"llm"`; the choice is frozen per run (`judge_kind`, `judge_model`, `judge_key_source`, `judge_integration_id`, `judge_provider_id` in the run metadata). The admin secret cannot use `judgeIntegrationId` (400 `judge_integration_not_allowed`). A decision skill's run is graded deterministically (`exact` / `contains` cases only) and ignores the judge fields. Guard-scoped cases are created with `eval.tests.create(skillId, { ..., guardPhase: "preflight" })` and record `_guard` in `scoresJson`.
 
 ### Backward compatibility
 
