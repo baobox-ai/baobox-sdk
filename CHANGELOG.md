@@ -15,6 +15,8 @@ Fixes `skills.roleModels.get()` returning the wrong shape.
   inherits the tenant default. The return type is unchanged; `skillId` is not
   surfaced (the caller already has it, and every chain entry carries it).
   `skills.roleModels.put()` was not affected.
+  If your code worked around this by reading `.roles` from the result, remove
+  that step: on 0.32.1 the result is already the role map.
 
 ## 0.32.0
 
