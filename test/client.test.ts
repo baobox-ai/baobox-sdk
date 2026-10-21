@@ -4129,3 +4129,378 @@ describe("0.32.0 eval judge selection, guard cases and metadata helpers", () => 
     expect(parseEvalRunMetadata(null)).toEqual({});
   });
 });
+
+// ─── 0.33.0 — OTLP trace export ──────────────────────────────────────────────
+
+describe("runs.exportOtlp / sessions.exportOtlp (0.33.0)", () => {
+  // A bare OTLP/JSON ExportTraceServiceRequest — NOT the { data, metadata }
+  // envelope. The SDK must hand it back untouched.
+  const otlpBody = {
+    resourceSpans: [
+      {
+        resource: {
+          attributes: [{ key: "service.name", value: { stringValue: "baobox" } }],
+        },
+        scopeSpans: [
+          {
+            scope: { name: "baobox", version: "0.0.0" },
+            spans: [
+              {
+                traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+                spanId: "00f067aa0ba902b7",
+                parentSpanId: "1111111111111111",
+                name: "invoke_workflow sk_x",
+                kind: 2,
+                startTimeUnixNano: "1761000000000000000",
+                endTimeUnixNano: "1761000000500000000",
+                attributes: [{ key: "gen_ai.operation.name", value: { stringValue: "invoke_workflow" } }],
+                events: [],
+                status: { code: 0 },
+                links: [{ traceId: "4bf92f3577b34da6a3ce929d0e0e4736", spanId: "2222222222222222" }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  function client(fetch: typeof globalThis.fetch) {
+    return new BaoBoxClient({ endpoint: "https://api.example.com", adminSecret: "adm", fetch });
+  }
+
+  it("runs.exportOtlp GETs the admin run export with format=otlp and the admin secret", async () => {
+    const seen: { url?: string; method?: string; auth?: string } = {};
+    const fetch = fakeFetch((url, init) => {
+      seen.url = url;
+      seen.method = init.method;
+      seen.auth = (init.headers as Record<string, string>).authorization;
+      return jsonResponse(200, otlpBody);
+    });
+    const out = await client(fetch).runs.exportOtlp("wflow_a/b");
+    expect(seen.method).toBe("GET");
+    expect(seen.url).toBe("https://api.example.com/api/v1/admin/runs/wflow_a%2Fb/export?format=otlp");
+    expect(seen.auth).toBe("Bearer adm");
+    // Raw body, no `{ data }` unwrap.
+    expect(out).toEqual(otlpBody);
+    expect(out.resourceSpans[0]?.scopeSpans[0]?.spans[0]?.links?.[0]?.spanId).toBe("2222222222222222");
+  });
+
+  it("sessions.exportOtlp GETs the session export with format=otlp", async () => {
+    let seenUrl = "";
+    const fetch = fakeFetch((url) => {
+      seenUrl = url;
+      return jsonResponse(200, otlpBody);
+    });
+    const out = await client(fetch).sessions.exportOtlp("ses_1");
+    expect(seenUrl).toBe("https://api.example.com/api/v1/sessions/ses_1/export?format=otlp");
+    expect(out).toEqual(otlpBody);
+  });
+
+  it("adds include_content=1 only when includeContent is true", async () => {
+    const urls: string[] = [];
+    const fetch = fakeFetch((url) => {
+      urls.push(url);
+      return jsonResponse(200, otlpBody);
+    });
+    const bb = client(fetch);
+    await bb.runs.exportOtlp("wflow_1", { includeContent: true });
+    await bb.runs.exportOtlp("wflow_1", { includeContent: false });
+    await bb.runs.exportOtlp("wflow_1", {});
+    await bb.sessions.exportOtlp("ses_1", { includeContent: true });
+    expect(urls).toEqual([
+      "https://api.example.com/api/v1/admin/runs/wflow_1/export?format=otlp&include_content=1",
+      "https://api.example.com/api/v1/admin/runs/wflow_1/export?format=otlp",
+      "https://api.example.com/api/v1/admin/runs/wflow_1/export?format=otlp",
+      "https://api.example.com/api/v1/sessions/ses_1/export?format=otlp&include_content=1",
+    ]);
+  });
+
+  it("does not unwrap a body that happens to carry a `data` key", async () => {
+    const fetch = fakeFetch(() => jsonResponse(200, { data: "x", resourceSpans: [] }));
+    const out = await client(fetch).runs.exportOtlp("wflow_1");
+    expect(out).toEqual({ data: "x", resourceSpans: [] });
+  });
+
+  it("maps a 404 to BaoBoxError with the server's code and request id", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(404, {
+        error: { code: "NOT_FOUND", message: "Run not found", requestId: "req_404" },
+      }),
+    );
+    const err = await client(fetch).runs.exportOtlp("wflow_missing").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BaoBoxError);
+    expect((err as BaoBoxError).status).toBe(404);
+    expect((err as BaoBoxError).code).toBe("NOT_FOUND");
+    expect((err as BaoBoxError).requestId).toBe("req_404");
+  });
+
+  it("requires adminSecret", async () => {
+    const fetch = fakeFetch(() => jsonResponse(200, otlpBody));
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    await expect(bb.sessions.exportOtlp("ses_1")).rejects.toThrow(/adminSecret required/);
+  });
+});
+
+// ─── 0.33.0 — W3C traceparent passthrough + response-header meta ───────────
+
+describe("traceparent passthrough (0.33.0)", () => {
+  const TP_IN = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+  const TP_ECHO = "00-4bf92f3577b34da6a3ce929d0e0e4736-a1b2c3d4e5f60718-01";
+
+  function envelopeResponse(data: unknown, headers: Record<string, string> = {}): Response {
+    return new Response(
+      JSON.stringify({ data, metadata: { requestId: "req_body", latencyMs: 3 } }),
+      { status: 200, headers: { "content-type": "application/json", ...headers } },
+    );
+  }
+
+  function headersOf(init: RequestInit): Record<string, string> {
+    return init.headers as Record<string, string>;
+  }
+
+  const chatData = { response: "ok", usage: { inputTokens: 1, outputTokens: 2 } };
+  const workflowData = { response: "ok", runId: "wflow_1", usage: { inputTokens: 1, outputTokens: 2 } };
+  const workflowReq = { skill: "sk_1", clientId: "c_1", requestId: "ext_1", input: "hi" };
+
+  it("chat() sends the traceparent header verbatim and surfaces the echo + X-Request-Id", async () => {
+    let seen: Record<string, string> = {};
+    let seenBody = "";
+    const fetch = fakeFetch((_url, init) => {
+      seen = headersOf(init);
+      seenBody = String(init.body);
+      return envelopeResponse(chatData, { traceparent: TP_ECHO, "x-request-id": "req_hdr" });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    const res = await bb.chat({ message: "hi", traceparent: TP_IN });
+    expect(seen.traceparent).toBe(TP_IN);
+    // A header, never a body field.
+    expect(JSON.parse(seenBody)).not.toHaveProperty("traceparent");
+    expect(res.meta.traceparent).toBe(TP_ECHO);
+    expect(res.meta.requestIdHeader).toBe("req_hdr");
+    // The body's requestId is still read from the body.
+    expect(res.meta.requestId).toBe("req_body");
+  });
+
+  it("workflow() sends the traceparent header and surfaces the echo", async () => {
+    let seen: Record<string, string> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seen = headersOf(init);
+      return envelopeResponse(workflowData, { traceparent: TP_ECHO, "x-request-id": "req_hdr" });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    const res = await bb.workflow({ ...workflowReq, traceparent: TP_IN });
+    expect(seen.traceparent).toBe(TP_IN);
+    expect(res.meta.traceparent).toBe(TP_ECHO);
+    expect(res.meta.requestIdHeader).toBe("req_hdr");
+  });
+
+  it("forwards an invalid value verbatim too (the server decides; the SDK does not validate)", async () => {
+    let seen: Record<string, string> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seen = headersOf(init);
+      return envelopeResponse(chatData);
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    const res = await bb.chat({ message: "hi", traceparent: "garbage" });
+    expect(seen.traceparent).toBe("garbage");
+    // The server sent no echo, so none is surfaced.
+    expect(res.meta).not.toHaveProperty("traceparent");
+  });
+
+  it("without traceparent: no header is sent and the meta is unchanged", async () => {
+    const seen: Array<Record<string, string>> = [];
+    const fetch = fakeFetch((url, init) => {
+      seen.push(headersOf(init));
+      return envelopeResponse(url.endsWith("/chat") ? chatData : workflowData);
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    const chatRes = await bb.chat({ message: "hi" });
+    const wfRes = await bb.workflow(workflowReq);
+    for (const h of seen) {
+      expect(Object.keys(h).map((k) => k.toLowerCase())).not.toContain("traceparent");
+    }
+    // No response headers → exactly the pre-0.33.0 meta shape.
+    expect(chatRes.meta).toEqual({ requestId: "req_body", latencyMs: 3, model: undefined, trace: undefined });
+    expect(wfRes.meta).toEqual({ requestId: "req_body", latencyMs: 3, model: undefined, trace: undefined });
+  });
+
+  it("an Idempotency-Key replay keeps the body requestId and the header's fresh id apart", async () => {
+    const fetch = fakeFetch(() =>
+      envelopeResponse(workflowData, { "x-request-id": "req_fresh_attempt" }),
+    );
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    const res = await bb.workflow(workflowReq);
+    expect(res.meta.requestId).toBe("req_body");
+    expect(res.meta.requestIdHeader).toBe("req_fresh_attempt");
+    expect(res.meta).not.toHaveProperty("traceparent");
+  });
+
+  it("chatStream() sends the header and reports the echo via onResponseMeta before the first frame", async () => {
+    let seen: Record<string, string> = {};
+    const order: string[] = [];
+    const fetch = fakeFetch((_url, init) => {
+      seen = headersOf(init);
+      return new Response("event: done\ndata: {\"session_id\":\"s\"}\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream", traceparent: TP_ECHO, "x-request-id": "req_stream" },
+      });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    let meta: unknown;
+    for await (const ev of bb.chatStream({
+      message: "hi",
+      traceparent: TP_IN,
+      onResponseMeta: (m) => {
+        meta = m;
+        order.push("meta");
+      },
+    })) {
+      order.push(ev.event);
+    }
+    expect(seen.traceparent).toBe(TP_IN);
+    expect(meta).toEqual({ requestIdHeader: "req_stream", traceparent: TP_ECHO });
+    expect(order).toEqual(["meta", "done"]);
+  });
+
+  it("chatStream() without traceparent sends no header; onResponseMeta gets only what the server sent", async () => {
+    let seen: Record<string, string> = {};
+    const fetch = fakeFetch((_url, init) => {
+      seen = headersOf(init);
+      return new Response("event: done\ndata: {}\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    let meta: unknown = "not-called";
+    const events: string[] = [];
+    for await (const ev of bb.chatStream({ message: "hi", onResponseMeta: (m) => (meta = m) })) {
+      events.push(ev.event);
+    }
+    expect(Object.keys(seen)).not.toContain("traceparent");
+    expect(meta).toEqual({});
+    expect(events).toEqual(["done"]);
+  });
+
+  it("chatStream() does not call onResponseMeta when the request fails", async () => {
+    const fetch = fakeFetch(() =>
+      jsonResponse(401, { error: { code: "UNAUTHORIZED", message: "no", requestId: "req_e" } }),
+    );
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    const onResponseMeta = vi.fn();
+    const run = async () => {
+      for await (const _ev of bb.chatStream({ message: "hi", onResponseMeta })) {
+        // unreachable
+      }
+    };
+    await expect(run()).rejects.toBeInstanceOf(BaoBoxError);
+    expect(onResponseMeta).not.toHaveBeenCalled();
+  });
+});
+
+// ─── 0.33.0 (#37) — global opt-in + tenant scope on create / import ─────────
+
+describe("skills.create / skills.import scope (#37, 0.33.0)", () => {
+  const rawSkill = {
+    skillId: "sk_1",
+    name: "Chaser",
+    description: "",
+    systemPrompt: "p",
+    model: "m",
+    temperature: 0,
+    maxTokens: 100,
+    sourceUrl: null,
+    tenantId: null,
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-01T00:00:00Z",
+  };
+
+  type Seen = { url: string; headers: Record<string, string>; body: unknown };
+
+  function capture(status = 201, responseBody: unknown = { data: rawSkill, metadata: { requestId: "r" } }) {
+    const seen: Seen[] = [];
+    const fetch = fakeFetch((url, init) => {
+      seen.push({
+        url,
+        headers: init.headers as Record<string, string>,
+        body: init.body === undefined ? undefined : JSON.parse(String(init.body)),
+      });
+      return jsonResponse(status, responseBody);
+    });
+    return { seen, fetch };
+  }
+
+  function admin(fetch: typeof globalThis.fetch) {
+    return new BaoBoxClient({ endpoint: "https://api.example.com", adminSecret: "adm", fetch });
+  }
+
+  const createReq = { name: "Chaser", systemPrompt: "p" };
+  const importReq = { url: "https://example.com/SKILL.md", name: "Imported" };
+
+  it("create({ tenantId }) sends X-BaoBox-Tenant-Id and no global opt-in", async () => {
+    const { seen, fetch } = capture();
+    await admin(fetch).skills.create(createReq, { tenantId: "t_acme" });
+    expect(seen[0]?.headers["X-BaoBox-Tenant-Id"]).toBe("t_acme");
+    expect(seen[0]?.headers["X-BaoBox-Global"]).toBeUndefined();
+    expect(seen[0]?.body).not.toHaveProperty("global");
+  });
+
+  it("create({ global: true }) sends X-BaoBox-Global: true and no tenant header", async () => {
+    const { seen, fetch } = capture();
+    await admin(fetch).skills.create(createReq, { global: true });
+    expect(seen[0]?.url).toBe("https://api.example.com/api/v1/skills");
+    expect(seen[0]?.headers["X-BaoBox-Global"]).toBe("true");
+    expect(seen[0]?.headers["X-BaoBox-Tenant-Id"]).toBeUndefined();
+    // The opt-in is a header; the body is the plain skill write body.
+    expect(seen[0]?.body).not.toHaveProperty("global");
+  });
+
+  it("create() with neither sends no scope header and surfaces the server's 400", async () => {
+    const { seen, fetch } = capture(400, {
+      error: { code: "BAD_REQUEST", message: "Refusing to create a global skill without explicit opt-in.", requestId: "req_400" },
+    });
+    const err = await admin(fetch).skills.create(createReq).catch((e: unknown) => e);
+    expect(seen[0]?.headers["X-BaoBox-Global"]).toBeUndefined();
+    expect(seen[0]?.headers["X-BaoBox-Tenant-Id"]).toBeUndefined();
+    expect(err).toBeInstanceOf(BaoBoxError);
+    expect((err as BaoBoxError).status).toBe(400);
+    expect((err as BaoBoxError).code).toBe("BAD_REQUEST");
+  });
+
+  it("import({ tenantId }) sends X-BaoBox-Tenant-Id; the body stays { url, name }", async () => {
+    const { seen, fetch } = capture();
+    await admin(fetch).skills.import(importReq, { tenantId: "t_acme" });
+    expect(seen[0]?.url).toBe("https://api.example.com/api/v1/skills/import");
+    expect(seen[0]?.headers.authorization).toBe("Bearer adm");
+    expect(seen[0]?.headers["X-BaoBox-Tenant-Id"]).toBe("t_acme");
+    expect(seen[0]?.headers["X-BaoBox-Global"]).toBeUndefined();
+    expect(seen[0]?.body).toEqual(importReq);
+  });
+
+  it("import({ global: true }) sends X-BaoBox-Global: true", async () => {
+    const { seen, fetch } = capture();
+    await admin(fetch).skills.import(importReq, { global: true });
+    expect(seen[0]?.headers["X-BaoBox-Global"]).toBe("true");
+    expect(seen[0]?.headers["X-BaoBox-Tenant-Id"]).toBeUndefined();
+    expect(seen[0]?.body).toEqual(importReq);
+  });
+
+  it("import() with neither sends no scope header and surfaces the server's 400", async () => {
+    const { seen, fetch } = capture(400, {
+      error: { code: "BAD_REQUEST", message: "Refusing to import a global skill without explicit opt-in.", requestId: "req_400" },
+    });
+    const err = await admin(fetch).skills.import(importReq).catch((e: unknown) => e);
+    expect(seen[0]?.headers["X-BaoBox-Global"]).toBeUndefined();
+    expect(seen[0]?.headers["X-BaoBox-Tenant-Id"]).toBeUndefined();
+    expect(seen[0]?.body).toEqual(importReq);
+    expect((err as BaoBoxError).status).toBe(400);
+  });
+
+  it("forwards both headers as given when both are passed (the server's tenant scope wins)", async () => {
+    const { seen, fetch } = capture();
+    await admin(fetch).skills.create(createReq, { tenantId: "t_acme", global: true });
+    expect(seen[0]?.headers["X-BaoBox-Tenant-Id"]).toBe("t_acme");
+    expect(seen[0]?.headers["X-BaoBox-Global"]).toBe("true");
+  });
+});

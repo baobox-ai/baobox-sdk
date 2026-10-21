@@ -41,6 +41,7 @@ import type {
   ChatStreamRequest,
   ContentBlock,
   SseEvent,
+  StreamResponseMeta,
   CreateApiKeyRequest,
   CreateEvalCaseRequest,
   CreateScheduledTaskRequest,
@@ -63,8 +64,10 @@ import type {
   EvalStatsRequest,
   Event,
   EventListRequest,
+  ExportOtlpOptions,
   HealthResponse,
   JsonObject,
+  OtlpExportTraceServiceRequest,
   ResponseMeta,
   RunEvalRequest,
   ScheduledTask,
@@ -82,6 +85,7 @@ import type {
   SkillLlmParams,
   SkillLlmTransport,
   SkillLlmSource,
+  SkillCreateOptions,
   SkillCreateRequest,
   SkillFile,
   SkillFileReference,
@@ -533,6 +537,16 @@ export class BaoBoxClient {
      * Corresponds to `PATCH /api/v1/sessions/:id/metadata`.
      */
     updateMetadata: (sessionId: string, metadata: SessionMetadataUpdateRequest) => Promise<SessionMetadataUpdateResult>;
+    /**
+     * 0.33.0 — the session's trace as an OpenTelemetry OTLP/JSON
+     * `ExportTraceServiceRequest` (admin secret). One trace per request in the
+     * session, each with an `invoke_agent` root carrying
+     * `gen_ai.conversation.id` = the session id. Metadata only unless
+     * `{ includeContent: true }`. Returned exactly as the server sent it, so it
+     * can be POSTed unchanged to a collector's `/v1/traces`.
+     * Corresponds to `GET /api/v1/sessions/:id/export?format=otlp`.
+     */
+    exportOtlp: (sessionId: string, options?: ExportOtlpOptions) => Promise<OtlpExportTraceServiceRequest>;
   };
   public readonly skills: {
     /**
@@ -548,14 +562,19 @@ export class BaoBoxClient {
     get: (skillId: string, options?: SkillScopeOptions) => Promise<SkillWithFiles>;
     /**
      * Create a skill. Pass `{ tenantId }` (or use an apiKey client) to create a
-     * TENANT-OWNED skill (#257); an unscoped adminSecret client creates a global
-     * skill. An apiKey client must NOT pass `tools` — attach tools separately via
-     * `skills.attachTool` (the per-key tool allowlist applies).
+     * TENANT-OWNED skill (#257). To create a GLOBAL skill an adminSecret client
+     * must opt in with `{ global: true }` (sends `X-BaoBox-Global: true`);
+     * with neither option the server answers 400, surfaced as `BaoBoxError` —
+     * the SDK never defaults to global. An apiKey client must NOT pass `tools` —
+     * attach tools separately via `skills.attachTool` (the per-key tool
+     * allowlist applies).
      */
-    create: (req: SkillCreateRequest, options?: SkillScopeOptions) => Promise<Skill>;
+    create: (req: SkillCreateRequest, options?: SkillCreateOptions) => Promise<Skill>;
     /**
-     * Update a skill. Pass `{ tenantId }` to scope the write — updating a skill
-     * owned by another tenant returns 404 (#247); global skills stay writable.
+     * Update a skill. Pass `{ tenantId }` to scope the write: the skill must be
+     * OWNED by that tenant — another tenant's skill or a global skill returns
+     * 404. Only an unscoped adminSecret call (no `tenantId`) can edit a global
+     * skill.
      */
     update: (
       skillId: string,
@@ -593,12 +612,20 @@ export class BaoBoxClient {
     ) => Promise<DetachToolResult>;
     /** List the tools attached to a skill, tenant-scoped. */
     listTools: (skillId: string, options?: SkillScopeOptions) => Promise<Tool[]>;
-    import: (req: SkillImportRequest) => Promise<Skill>;
+    /**
+     * Import a skill from a raw SKILL.md URL (admin secret). Creates a skill,
+     * so it takes the same choice as `create`: `{ tenantId }` for a
+     * tenant-owned skill, `{ global: true }` for a global one. With neither the
+     * server answers 400, surfaced as `BaoBoxError`.
+     */
+    import: (req: SkillImportRequest, options?: SkillCreateOptions) => Promise<Skill>;
     /**
      * Delete a skill. Works with a tenant `apiKey` carrying `skills:delete`
      * (#572; scoped to the key's OWN skill — deleting another tenant's or a
      * global skill returns 404) OR the admin secret. On an adminSecret client,
-     * pass `{ tenantId }` to scope the delete to one tenant.
+     * pass `{ tenantId }` to scope the delete to one tenant: the same rule
+     * applies, so a scoped delete of a global skill returns 404. Only an
+     * unscoped adminSecret call (no `tenantId`) can delete a global skill.
      */
     delete: (skillId: string, options?: SkillScopeOptions) => Promise<DeleteResult>;
     /**
@@ -742,6 +769,16 @@ export class BaoBoxClient {
      * timeline so the trace shows the full story alongside the AI events.
      */
     appendEvent: (runId: string, req: AppendRunEventRequest) => Promise<AppendedRunEvent>;
+    /**
+     * 0.33.0 — the run's trace as an OpenTelemetry OTLP/JSON
+     * `ExportTraceServiceRequest` (admin secret): one trace with an
+     * `invoke_workflow` root, a `chat` span per LLM call and an `execute_tool`
+     * span per tool call. Metadata only unless `{ includeContent: true }`.
+     * Returned exactly as the server sent it, so it can be POSTed unchanged to
+     * a collector's `/v1/traces`.
+     * Corresponds to `GET /api/v1/admin/runs/:id/export?format=otlp`.
+     */
+    exportOtlp: (runId: string, options?: ExportOtlpOptions) => Promise<OtlpExportTraceServiceRequest>;
   };
   /**
    * LLM model catalog — non-tenant, static metadata about the providers
@@ -852,6 +889,8 @@ export class BaoBoxClient {
       timeline: (id) => this.getSessionTimeline(id),
       delete: (id) => this.deleteSession(id),
       updateMetadata: (id, metadata) => this.updateSessionMetadata(id, metadata),
+      exportOtlp: (id, options) =>
+        this.exportOtlp(`/api/v1/sessions/${encodeURIComponent(id)}/export`, options),
     };
 
     this.skills = {
@@ -860,7 +899,7 @@ export class BaoBoxClient {
       create: (req, options) => this.createSkill(req, options),
       update: (id, req, options) => this.updateSkill(id, req, options),
       save: (req) => this.saveSkill(req),
-      import: (req) => this.importSkill(req),
+      import: (req, options) => this.importSkill(req, options),
       delete: (id, options) => this.deleteSkill(id, options),
       attachSkill: (parentId, childId, options) =>
         this.attachSubSkillScoped(parentId, childId, options),
@@ -927,6 +966,8 @@ export class BaoBoxClient {
       get: (runId) => this.getRunTimeline(runId),
       list: (req) => this.listRuns(req),
       appendEvent: (runId, req) => this.appendRunEvent(runId, req),
+      exportOtlp: (runId, options) =>
+        this.exportOtlp(`/api/v1/admin/runs/${encodeURIComponent(runId)}/export`, options),
     };
 
     this.catalog = {
@@ -987,6 +1028,7 @@ export class BaoBoxClient {
         metadata: req.metadata,
         attachments: attachmentsToWire(req.attachments),
       }),
+      traceparentHeaders(req.traceparent),
     );
 
     // B1 (epic #170 §3.7): a guardrail block is not an error — the server
@@ -1046,6 +1088,7 @@ export class BaoBoxClient {
         history: req.history,
         attachments: attachmentsToWire(req.attachments),
       }),
+      traceparentHeaders(req.traceparent),
     );
 
     // B1 (epic #170 §3.7): a guardrail block is not an error — the server
@@ -1128,6 +1171,7 @@ export class BaoBoxClient {
           "content-type": "application/json",
           accept: "text/event-stream",
           authorization: `Bearer ${this.apiKey}`,
+          ...traceparentHeaders(req.traceparent),
         },
         body: JSON.stringify(body),
         signal: controller.signal,
@@ -1166,6 +1210,11 @@ export class BaoBoxClient {
     if (!res.body) {
       throw new BaoBoxError(0, "NETWORK", "chatStream: response has no body", null, null);
     }
+
+    // 0.33.0 — a stream has no result object, so the response headers'
+    // `X-Request-Id` and `traceparent` echo are reported once, here, before
+    // the first frame.
+    req.onResponseMeta?.(responseHeaderMeta(res));
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -1301,7 +1350,7 @@ export class BaoBoxClient {
     return mapSkillWithFiles(body.data);
   }
 
-  private async createSkill(req: SkillCreateRequest, options?: SkillScopeOptions): Promise<Skill> {
+  private async createSkill(req: SkillCreateRequest, options?: SkillCreateOptions): Promise<Skill> {
     // #257 — the `tools` convenience field reconciles via the admin-only tool
     // routes (syncSkillTools). Reject it up front for an apiKey-only client so we
     // never create the skill and THEN fail on tools, leaving a half-built skill.
@@ -1313,12 +1362,13 @@ export class BaoBoxClient {
     }
     // #257 — use the dual-auth skills path (adminSecret OR apiKey). With an
     // apiKey, the worker forces tenant ownership; with adminSecret, `tenantId`
-    // (if given) scopes it, else it is global. Phase-1 behaviour preserved.
+    // (if given) scopes it, and a GLOBAL skill needs the explicit
+    // `{ global: true }` opt-in — without either the server's 400 surfaces.
     const body = await this.requestSkills<RawSkill>(
       "POST",
       "/api/v1/skills",
       buildSkillWriteBody(req),
-      tenantScopeHeaders(options),
+      skillCreateHeaders(options),
     );
     const skill = mapSkill(body.data);
     if (req.tools) await this.syncSkillTools(skill.id, req.tools);
@@ -1437,12 +1487,13 @@ export class BaoBoxClient {
         )
       : skillWithoutFiles(await this.getSkill(skillId, options));
 
-    // #247 scopes skill list/get/update only. Tool attach/detach routes are
-    // explicitly Phase 2 and are not tenant-scoped server-side yet, so the
-    // tool reconciliation deliberately runs unscoped — passing the header here
-    // would be a no-op. The Skill Studio contract's update payload carries no
-    // `tools`, so the BFF never reaches this branch. Scope it alongside the
-    // Phase-2 tool-route work.
+    // The `tools` reconciliation (`syncSkillTools`) runs UNSCOPED: it does not
+    // forward `{ tenantId }`. The admin tool attach/detach/list routes do
+    // honour `X-BaoBox-Tenant-Id` server-side now (a scoped write needs the
+    // skill owned by that tenant, and the tool own-or-global), so forwarding
+    // the scope is possible; it is not done yet, to keep this call's
+    // behaviour unchanged. The Skill Studio contract's update payload carries
+    // no `tools`, so the BFF never reaches this branch.
     if (req.tools) await this.syncSkillTools(skillId, req.tools);
     return skill;
   }
@@ -1451,11 +1502,16 @@ export class BaoBoxClient {
     return req.id ? this.updateSkill(req.id, req) : this.createSkill(req);
   }
 
-  private async importSkill(req: SkillImportRequest): Promise<Skill> {
-    const body = await this.requestAdmin<RawSkill>("POST", "/api/v1/skills/import", {
-      url: req.url,
-      name: req.name,
-    });
+  // 0.33.0 — import creates a skill, so it takes create's scope choice:
+  // `{ tenantId }` (tenant-owned) or `{ global: true }` (global). Neither → the
+  // server's 400 surfaces; the SDK never defaults to global.
+  private async importSkill(req: SkillImportRequest, options?: SkillCreateOptions): Promise<Skill> {
+    const body = await this.requestAdmin<RawSkill>(
+      "POST",
+      "/api/v1/skills/import",
+      { url: req.url, name: req.name },
+      skillCreateHeaders(options),
+    );
     return mapSkill(body.data);
   }
 
@@ -2122,8 +2178,26 @@ export class BaoBoxClient {
     method: HttpMethod,
     path: string,
     body?: unknown,
+    extraHeaders?: Record<string, string>,
   ): Promise<ApiEnvelope<T>> {
-    return this.request<T>(method, path, "apiKey", body);
+    return this.request<T>(method, path, "apiKey", body, extraHeaders);
+  }
+
+  // 0.33.0 — admin-secret GET whose body is NOT the `{ data, metadata }`
+  // envelope (the OTLP trace export is a bare `ExportTraceServiceRequest`).
+  // Same auth, timeout and `BaoBoxError` mapping as `request()`; the parsed
+  // body is returned as-is.
+  private async requestAdminRaw<T>(method: HttpMethod, path: string): Promise<T> {
+    const { parsed } = await this.send(method, path, "adminSecret");
+    return parsed as T;
+  }
+
+  private async exportOtlp(
+    exportPath: string,
+    options?: ExportOtlpOptions,
+  ): Promise<OtlpExportTraceServiceRequest> {
+    const query = options?.includeContent === true ? "?format=otlp&include_content=1" : "?format=otlp";
+    return this.requestAdminRaw<OtlpExportTraceServiceRequest>("GET", `${exportPath}${query}`);
   }
 
   private async requestAdmin<T>(
@@ -2158,6 +2232,29 @@ export class BaoBoxClient {
     body?: unknown,
     extraHeaders?: Record<string, string>,
   ): Promise<ApiEnvelope<T>> {
+    const { res, parsed } = await this.send(method, path, authMode, body, extraHeaders);
+    const envelope = parsed as {
+      data: T;
+      metadata?: RawMetadata;
+    };
+
+    return {
+      data: envelope.data,
+      meta: { ...mapResponseMeta(envelope.metadata), ...responseHeaderMeta(res) },
+      refusalSurface: envelope.metadata?.refusal_surface,
+    };
+  }
+
+  // The HTTP round trip shared by `request()` (enveloped JSON) and
+  // `requestAdminRaw()` (bare JSON): auth headers, timeout, and the
+  // `!res.ok → BaoBoxError` mapping. Returns the parsed body of a 2xx.
+  private async send(
+    method: HttpMethod,
+    path: string,
+    authMode: AuthMode,
+    body?: unknown,
+    extraHeaders?: Record<string, string>,
+  ): Promise<{ res: Response; parsed: unknown }> {
     const url = `${this.endpoint}${path}`;
     const controller = new AbortController();
     const headers = {
@@ -2218,16 +2315,7 @@ export class BaoBoxClient {
       );
     }
 
-    const envelope = parsed as {
-      data: T;
-      metadata?: RawMetadata;
-    };
-
-    return {
-      data: envelope.data,
-      meta: mapResponseMeta(envelope.metadata),
-      refusalSurface: envelope.metadata?.refusal_surface,
-    };
+    return { res, parsed };
   }
 
   private getAuthHeaders(authMode: AuthMode): Record<string, string> {
@@ -2245,6 +2333,25 @@ export class BaoBoxClient {
     }
     return { authorization: `Bearer ${this.adminSecret}` };
   }
+}
+
+// 0.33.0 — the response-header half of `ResponseMeta`: `X-Request-Id` (this
+// attempt's id) and the `traceparent` echo. Each key is set only when its
+// header is present, so a response without them yields `{}` and the meta is
+// unchanged. Tolerates a test double without `headers`.
+function responseHeaderMeta(res: Response): StreamResponseMeta {
+  const requestIdHeader = res.headers?.get?.("x-request-id") ?? null;
+  const traceparent = res.headers?.get?.("traceparent") ?? null;
+  return {
+    ...(requestIdHeader !== null ? { requestIdHeader } : {}),
+    ...(traceparent !== null ? { traceparent } : {}),
+  };
+}
+
+// 0.33.0 — the caller's W3C `traceparent`, forwarded verbatim as a request
+// header. Undefined → no header at all (the request is unchanged).
+function traceparentHeaders(traceparent: string | undefined): Record<string, string> | undefined {
+  return traceparent === undefined ? undefined : { traceparent };
 }
 
 function mapResponseMeta(metadata?: RawMetadata): ResponseMeta {
@@ -2607,6 +2714,19 @@ function compactObject<T extends Record<string, unknown>>(obj: T): T {
 function tenantScopeHeaders(options?: SkillScopeOptions): Record<string, string> | undefined {
   if (options?.tenantId === undefined) return undefined;
   return { "X-BaoBox-Tenant-Id": options.tenantId };
+}
+
+// 0.33.0 (#37) — the scope headers for a call that CREATES a skill
+// (`skills.create`, `skills.import`): `X-BaoBox-Tenant-Id` for `{ tenantId }`,
+// `X-BaoBox-Global: true` for `{ global: true }`. Both are forwarded as given;
+// the server decides (a tenant scope wins). Neither → no header, and the
+// server's 400 for an unscoped admin create surfaces unchanged.
+function skillCreateHeaders(options?: SkillCreateOptions): Record<string, string> | undefined {
+  const headers: Record<string, string> = {
+    ...(tenantScopeHeaders(options) ?? {}),
+    ...(options?.global === true ? { "X-BaoBox-Global": "true" } : {}),
+  };
+  return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
 function toJsonObject(input: unknown): JsonObject {

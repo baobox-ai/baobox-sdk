@@ -28,7 +28,30 @@ export type ResponseMeta = {
    */
   transport?: "stream" | "non_stream";
   trace?: ToolTrace[];
+  /**
+   * 0.33.0 — the `X-Request-Id` RESPONSE HEADER: this HTTP attempt's id.
+   * Equal to `requestId` (read from the body) on a normal call. On an
+   * `Idempotency-Key` replay they differ: `requestId` is the original run's id
+   * (frozen at storage time), `requestIdHeader` is this attempt's fresh id.
+   * Absent when the response carried no such header.
+   */
+  requestIdHeader?: string;
+  /**
+   * 0.33.0 — the `traceparent` RESPONSE HEADER. Present only when the request
+   * sent a valid W3C `traceparent` (see `ChatRequest.traceparent`): it carries
+   * YOUR trace id and BaoBox's own span id for this request, which is the root
+   * span of the request's OTLP trace export. W3C defines no response header —
+   * this echo is a BaoBox convention; record it as a span link or a lookup key.
+   */
+  traceparent?: string;
 };
+
+/**
+ * 0.33.0 — the response-header fields of `ResponseMeta`, as `chatStream()`
+ * reports them through `ChatStreamRequest.onResponseMeta` (a stream has no
+ * result object).
+ */
+export type StreamResponseMeta = Pick<ResponseMeta, "requestIdHeader" | "traceparent">;
 
 export type ToolTrace = {
   toolName: string;
@@ -134,6 +157,15 @@ export type ChatRequest = {
   scope?: ChatScope;
   /** Optional inbound attachments. See `client.attachments.*` for builders. */
   attachments?: AttachmentInput[];
+  /**
+   * 0.33.0 — an optional W3C Trace Context `traceparent`
+   * (`00-<32 hex trace id>-<16 hex parent span id>-<2 hex flags>`), sent
+   * verbatim as the `traceparent` request header; omitted when undefined. A
+   * valid value is stored with the call, the request's OTLP trace export uses
+   * your trace id, and the response echoes it in `meta.traceparent`. An invalid
+   * value is ignored by the server (never an error) and gets no echo.
+   */
+  traceparent?: string;
 };
 
 export type ChatResponse = {
@@ -192,6 +224,15 @@ export type WorkflowRequest = {
   history?: WorkflowHistoryEntry[];
   /** Optional inbound attachments. See `client.attachments.*` for builders. */
   attachments?: AttachmentInput[];
+  /**
+   * 0.33.0 — an optional W3C Trace Context `traceparent`
+   * (`00-<32 hex trace id>-<16 hex parent span id>-<2 hex flags>`), sent
+   * verbatim as the `traceparent` request header; omitted when undefined. A
+   * valid value is stored with the call, the request's OTLP trace export uses
+   * your trace id, and the response echoes it in `meta.traceparent`. An invalid
+   * value is ignored by the server (never an error) and gets no echo.
+   */
+  traceparent?: string;
 };
 
 export type WorkflowResponse<TOutput = unknown> = {
@@ -758,6 +799,20 @@ export type SkillUpdateRequest = Partial<SkillCreateRequest>;
  */
 export type SkillScopeOptions = {
   tenantId?: string;
+};
+
+/**
+ * 0.33.0 — options for the two calls that CREATE a skill: `skills.create` and
+ * `skills.import`. The server refuses to create a global skill unless the
+ * caller opts in, so an `adminSecret` client must say which it wants:
+ * - `{ tenantId }` — a skill owned by that tenant (`X-BaoBox-Tenant-Id`);
+ * - `{ global: true }` — a platform-global skill (`X-BaoBox-Global: true`).
+ * With neither, the server answers 400 and the SDK surfaces it as
+ * `BaoBoxError`; the SDK never defaults to global. An `apiKey` client needs
+ * neither: the key's tenant owns the skill.
+ */
+export type SkillCreateOptions = SkillScopeOptions & {
+  global?: true;
 };
 
 export type SkillUpsertRequest = SkillCreateRequest & {
@@ -1814,6 +1869,15 @@ export type ChatStreamRequest = {
   sessionId?: string;
   metadata?: JsonObject;
   attachments?: AttachmentInput[];
+  /** 0.33.0 — same as `ChatRequest.traceparent`. */
+  traceparent?: string;
+  /**
+   * 0.33.0 — called once with the response headers' `X-Request-Id` and
+   * `traceparent` echo, when the stream's 2xx response arrives and before the
+   * first frame is yielded. Not called when the request fails (the iterator
+   * throws `BaoBoxError` instead).
+   */
+  onResponseMeta?: (meta: StreamResponseMeta) => void;
 };
 
 // ─── Direct tool invocation (M4 endpoint, SDK 0.5.0) ─────────────────────────
@@ -1844,4 +1908,83 @@ export type ToolInvokeResponse = {
   /** Handler-specific result payload. Shape depends on the tool. */
   result: unknown;
   meta: ResponseMeta;
+};
+
+// ─── OTLP trace export (0.33.0) ──────────────────────────────────────────────
+//
+// `runs.exportOtlp` / `sessions.exportOtlp` return the server's body untouched:
+// an OpenTelemetry OTLP/JSON `ExportTraceServiceRequest` you can POST as-is to
+// a collector's `/v1/traces`. The types below are a minimal, read-only subset
+// of the OTLP JSON encoding — the fields BaoBox writes. Attribute names follow
+// the OpenTelemetry GenAI semantic conventions as of 2026-10, which are
+// experimental: names may change.
+//
+// Encoding: trace/span ids are lowercase hex (32 / 16 chars), 64-bit integers
+// (`*UnixNano`, `intValue`) are decimal STRINGS, `kind` and `status.code` are
+// the OTLP enum integers.
+
+/** OTLP `AnyValue` — the variants BaoBox emits. */
+export type OtlpAnyValue =
+  | { stringValue: string }
+  | { intValue: string }
+  | { doubleValue: number }
+  | { boolValue: boolean }
+  | { arrayValue: { values: OtlpAnyValue[] } };
+
+export type OtlpKeyValue = { key: string; value: OtlpAnyValue };
+
+export type OtlpSpanEvent = {
+  timeUnixNano: string;
+  name: string;
+  attributes: OtlpKeyValue[];
+};
+
+/** OTLP status: `code` 0 = UNSET, 1 = OK, 2 = ERROR. */
+export type OtlpStatus = { code: number; message?: string };
+
+export type OtlpSpanLink = {
+  traceId: string;
+  spanId: string;
+  attributes?: OtlpKeyValue[];
+};
+
+export type OtlpSpan = {
+  traceId: string;
+  spanId: string;
+  /** Absent on a root span that has no remote parent. */
+  parentSpanId?: string;
+  name: string;
+  /** OTLP `SpanKind`: 1 = INTERNAL, 2 = SERVER, 3 = CLIENT. */
+  kind: number;
+  startTimeUnixNano: string;
+  endTimeUnixNano: string;
+  attributes: OtlpKeyValue[];
+  events?: OtlpSpanEvent[];
+  status?: OtlpStatus;
+  links?: OtlpSpanLink[];
+};
+
+export type OtlpScopeSpans = {
+  scope: { name: string; version?: string };
+  spans: OtlpSpan[];
+};
+
+export type OtlpResourceSpans = {
+  resource: { attributes: OtlpKeyValue[] };
+  scopeSpans: OtlpScopeSpans[];
+};
+
+/** The body of `runs.exportOtlp` / `sessions.exportOtlp`. */
+export type OtlpExportTraceServiceRequest = {
+  resourceSpans: OtlpResourceSpans[];
+};
+
+export type ExportOtlpOptions = {
+  /**
+   * Include prompts, completions, tool arguments / results, error text and
+   * end-user identity attributes. Off by default (metadata only). Every
+   * included string passes through the server's secret scrubber first.
+   * Sent as `include_content=1` only when `true`.
+   */
+  includeContent?: boolean;
 };

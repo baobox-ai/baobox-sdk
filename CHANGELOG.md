@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.33.0
+
+OpenTelemetry trace export, W3C `traceparent` passthrough, and an explicit
+global opt-in for creating skills.
+
+### Added
+
+- **`runs.exportOtlp(runId, { includeContent? })`** and
+  **`sessions.exportOtlp(sessionId, { includeContent? })`** (admin secret).
+  They return the run's or session's trace as an OpenTelemetry OTLP/JSON
+  `ExportTraceServiceRequest`, exactly as the server sent it (no `{ data }`
+  unwrap), so the result can be POSTed unchanged to a collector's
+  `/v1/traces`. Metadata only by default; `{ includeContent: true }` sends
+  `include_content=1` and adds prompts, completions, tool arguments / results,
+  error text and end-user identity attributes, each passed through the
+  server's secret scrubber first. Span and attribute names follow the
+  OpenTelemetry GenAI semantic conventions as of 2026-10, which are
+  experimental: names may change. New types: `OtlpExportTraceServiceRequest`
+  (a minimal typed subset: `OtlpResourceSpans`, `OtlpScopeSpans`, `OtlpSpan`
+  with optional `links`, `OtlpSpanEvent`, `OtlpSpanLink`, `OtlpStatus`,
+  `OtlpKeyValue`, `OtlpAnyValue`) and `ExportOtlpOptions`.
+- **`traceparent?: string`** on `chat()`, `chatStream()` and `workflow()`
+  requests. Sent verbatim as the W3C `traceparent` request header, and only
+  when given. A valid value is stored with the call: the request's OTLP export
+  then uses your trace id, and its root span names your span as its parent.
+  The SDK does not validate the value; the server ignores an invalid one
+  (never an error).
+- **Response-header meta.** `ResponseMeta` gains two optional fields, read from
+  the response headers of every enveloped call:
+  - `traceparent` — BaoBox's echo (`00-<your trace id>-<BaoBox span id>-<flags>`),
+    present only when you sent a valid `traceparent`. W3C defines no response
+    header; this is a BaoBox convention. Record it as a span link or a lookup
+    key.
+  - `requestIdHeader` — the `X-Request-Id` header. It equals `requestId` except
+    on an `Idempotency-Key` replay, where `requestId` (from the body) is the
+    original run's id and `requestIdHeader` is this attempt's id.
+  Both are absent when the server sent no such header, so the meta of a call
+  without them is unchanged.
+- **`ChatStreamRequest.onResponseMeta(meta)`** — a stream has no result object,
+  so `chatStream()` reports the same two header fields
+  (`StreamResponseMeta`) through this callback once the 2xx response arrives,
+  before the first frame. It is not called when the request fails.
+- **`skills.create(req, { global: true })`** and
+  **`skills.import(req, { tenantId } | { global: true })`** (new
+  `SkillCreateOptions`). The server refuses to create a global skill unless the
+  caller opts in; `{ global: true }` sends `X-BaoBox-Global: true`, and
+  `{ tenantId }` sends `X-BaoBox-Tenant-Id` (import could not be scoped
+  before). With neither, the server's 400 surfaces as `BaoBoxError`: the SDK
+  never defaults to global.
+
+### Changed
+
+- **Migration note for admin callers:** an `adminSecret` client that called
+  `skills.create(req)` or `skills.import(req)` with no options, intending a
+  global skill, now gets a 400 from current servers. Pass `{ global: true }`
+  (or `{ tenantId }` for a tenant-owned skill).
+- `skills.update` / `skills.delete` docs: a `{ tenantId }`-scoped write or
+  delete of a GLOBAL skill returns 404 on current servers. Only an unscoped
+  `adminSecret` call (no `tenantId`) can edit or delete a global skill. The old
+  "global skills stay writable" wording is gone.
+- The comment on `skills.update`'s `tools` reconciliation is corrected: the
+  admin tool attach / detach / list routes now honour `X-BaoBox-Tenant-Id`.
+  The reconciliation itself still runs unscoped (behaviour unchanged).
+
 ## 0.32.1
 
 Fixes `skills.roleModels.get()` returning the wrong shape.

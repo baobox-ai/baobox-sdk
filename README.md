@@ -182,6 +182,21 @@ The SDK sends the scope as the `X-BaoBox-Tenant-Id` header. This is what the
 Skill Studio BFF (`@baobox/skill-builder-bff`) uses to act on behalf of exactly
 one tenant. Requires a server with the #247 worker support.
 
+A scoped `skills.update` / `skills.delete` acts only on a skill OWNED by that
+tenant: another tenant's skill or a global skill returns 404. Only an unscoped
+admin call (no `tenantId`) can edit or delete a global skill.
+
+Creating a skill (`skills.create`, `skills.import`) on an admin client needs an
+explicit owner (0.33.0+): `{ tenantId }` for a tenant-owned skill, or
+`{ global: true }` (sent as `X-BaoBox-Global: true`) for a platform-global one.
+With neither, the server answers 400 and the SDK throws `BaoBoxError` — it never
+defaults to global.
+
+```typescript
+await bb.skills.import({ url: "https://example.com/SKILL.md" }, { tenantId: "t_acme" });
+await bb.skills.create({ name: "Shared helper", systemPrompt: "..." }, { global: true });
+```
+
 ## API surface
 
 ### Chat
@@ -195,7 +210,7 @@ const res = await bb.chat({
 });
 ```
 
-Returns `{ response, usage: { inputTokens, outputTokens }, sessionId, content, blocks, refusalSurface, meta }` where `content` (0.32.0+) holds the turn's content blocks when the server sent any (text, tool calls, `structured` blocks, a decision skill's answer); `blocks` and `refusalSurface` are set only on a guardrail refusal (`blocks` = a single `refusal` block); and `meta` carries `requestId`, `latencyMs`, `model`, an optional `transport` (`"stream"` / `"non_stream"` — how BaoBox called the model provider, 0.31.0+) and an optional `trace` array.
+Returns `{ response, usage: { inputTokens, outputTokens }, sessionId, content, blocks, refusalSurface, meta }` where `content` (0.32.0+) holds the turn's content blocks when the server sent any (text, tool calls, `structured` blocks, a decision skill's answer); `blocks` and `refusalSurface` are set only on a guardrail refusal (`blocks` = a single `refusal` block); and `meta` carries `requestId`, `latencyMs`, `model`, an optional `transport` (`"stream"` / `"non_stream"` — how BaoBox called the model provider, 0.31.0+), an optional `trace` array, and (0.33.0+) the response headers `requestIdHeader` (`X-Request-Id`) and `traceparent` (see [Export traces to OpenTelemetry](#export-traces-to-opentelemetry--added-in-0330)).
 
 ### Workflow (single-turn, stateless) — added in 0.3.0
 
@@ -369,11 +384,16 @@ const scoped = await bb.sessions.create({ skillId: "sk_chase", tenantId: "t_123"
 const history = await bb.sessions.messages(session.id);
 const timeline = await bb.sessions.timeline(session.id);
 
-const skill = await bb.skills.create({
-  name: "Document Chaser",
-  systemPrompt: "...",
-  tools: ["lookup_client_docs"], // SDK convenience: syncs attachments after create
-});
+const skill = await bb.skills.create(
+  {
+    name: "Document Chaser",
+    systemPrompt: "...",
+    tools: ["lookup_client_docs"], // SDK convenience: syncs attachments after create
+  },
+  // An adminSecret client must say who owns the new skill: { tenantId } or,
+  // for a platform-global skill, { global: true }. Neither → 400 (0.33.0+).
+  { tenantId: "t_123" },
+);
 
 const tool = await bb.tools.create({
   name: "lookup_client_docs",
@@ -619,6 +639,89 @@ await bb.runs.appendEvent("wflow_abc123", {
 ```
 
 Append-event is the lightweight way to make a run's trace tell the full story: BaoBox writes the AI events; your backend writes the human/external events; the timeline interleaves them by `created_at` so the rendered trace shows the complete sequence (draft → human review → approve → external send → reply received → assess) without a thread abstraction.
+
+### Export traces to OpenTelemetry — added in 0.33.0
+
+`runs.exportOtlp` and `sessions.exportOtlp` (admin secret) return a run's or a
+session's trace as an OpenTelemetry OTLP/JSON `ExportTraceServiceRequest`. The
+body is returned exactly as the server sent it, so you can POST it unchanged to
+any OTLP/HTTP JSON endpoint (`/v1/traces`).
+
+```typescript
+const otlp = await bb.runs.exportOtlp("wflow_abc123");
+// or: await bb.sessions.exportOtlp("ses_1", { includeContent: true });
+
+await fetch(`${process.env.OTEL_EXPORTER_OTLP_ENDPOINT}/v1/traces`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify(otlp),
+});
+```
+
+The same with `curl`:
+
+```bash
+curl -s -H "Authorization: Bearer $BAOBOX_ADMIN_SECRET" \
+  "$BAOBOX_ENDPOINT/api/v1/admin/runs/$RUN_ID/export?format=otlp" \
+| curl -s -X POST "$OTEL_EXPORTER_OTLP_ENDPOINT/v1/traces" \
+    -H "content-type: application/json" --data-binary @-
+```
+
+- **Shape.** A run is one trace: an `invoke_workflow` root, a `chat` span per
+  LLM call, an `execute_tool` span per tool call. A session is one trace per
+  request, each rooted at `invoke_agent` with `gen_ai.conversation.id` = the
+  session id.
+- **Content is off by default.** The export carries metadata only: no prompts,
+  completions, tool arguments or results, error text, or end-user identity.
+  `{ includeContent: true }` (`include_content=1`) adds them, and every such
+  string passes through the server's secret scrubber first. Event metadata is
+  exported from a per-event allowlist, so unknown keys are withheld.
+- **Semantic conventions.** Attribute names follow the OpenTelemetry GenAI
+  semantic conventions as of 2026-10. Those are experimental: names may change.
+- **Timestamps are reconstructed at flush time.** BaoBox stamps event times
+  when it flushes a batch of events, so span durations come from measured
+  latencies and a trace's child spans are laid out one after another from
+  those stamps. Read them as approximate wall-clock times. The resource says
+  so with `baobox.timestamps = "flush_time"`. Forward the export promptly:
+  backends limit how old an ingested span may be.
+
+**Distributed tracing with `traceparent`.** Pass your W3C `traceparent` on
+`chat()`, `chatStream()` or `workflow()` and BaoBox stores it with the call. The
+request's OTLP export then uses your trace id, and its root span (kind SERVER)
+names your span as its parent. Nothing joins your trace until you forward the
+export to your collector.
+
+```typescript
+const res = await bb.workflow({
+  skill: "sk_chase", clientId: "c_1", requestId: "ext_1", input: "...",
+  traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+});
+res.meta.traceparent;     // "00-4bf92f…4736-<BaoBox span id>-01" (BaoBox's echo)
+res.meta.requestIdHeader; // the X-Request-Id response header
+
+for await (const ev of bb.chatStream({
+  message: "...",
+  traceparent: "00-…-01",
+  onResponseMeta: (m) => console.log(m.traceparent, m.requestIdHeader),
+})) { /* frames */ }
+```
+
+- The echo is a **BaoBox convention**: W3C defines no response header. It
+  carries your trace id, BaoBox's span id for this request (the export's root
+  span) and only your sampled bit. Record it as a span link or a lookup key.
+- An absent or invalid `traceparent` is ignored (never an error) and gets no
+  echo. The SDK sends your value verbatim and does not validate it.
+- The sampled bit does not affect storage or export.
+- In a session export each request is its own trace. Requests that carried
+  the same `traceparent` trace id share that one trace, each as its own
+  BaoBox root.
+- Only `chat()`, `chatStream()` and `workflow()` first attempts produce an
+  exportable span under your trace id. An `Idempotency-Key` replay echoes the
+  replay's own span id, and the export keeps the original attempt's trace.
+  The batch workflow API does not take a `traceparent`.
+- Server-to-server only for now: BaoBox's CORS policy does not yet allow a
+  `traceparent` request header or expose the echo, so a cross-origin browser
+  call that sets `traceparent` fails its preflight. Send it from your backend.
 
 ### Tools (direct invocation) — added in 0.5.0
 
