@@ -500,7 +500,12 @@ export class BaoBoxClient {
       delete: (id: string) => Promise<DeleteResult>;
     };
     skills: {
-      upsert: (req: SkillUpsertRequest) => Promise<Skill>;
+      /**
+       * Create (no `req.id`) or update (`req.id`) a skill. Same as
+       * `skills.save`: a new skill needs `{ tenantId }` or `{ global: true }`
+       * on an adminSecret client (0.33.0+).
+       */
+      upsert: (req: SkillUpsertRequest, options?: SkillCreateOptions) => Promise<Skill>;
       /**
        * Update guardrail flags and addenda on any skill (B1, admin-only).
        * Can set `preflightDisabled` / `postflightDisabled` in addition to
@@ -581,7 +586,14 @@ export class BaoBoxClient {
       req: SkillUpdateRequest,
       options?: SkillScopeOptions,
     ) => Promise<Skill>;
-    save: (req: SkillUpsertRequest) => Promise<Skill>;
+    /**
+     * Create (no `req.id`) or update (`req.id`) a skill. 0.33.0: `options` is
+     * passed to the call that runs. Creating needs the same choice as
+     * `create` — `{ tenantId }` or `{ global: true }` on an adminSecret client,
+     * else the server's 400 surfaces. Updating uses `{ tenantId }` as the write
+     * scope (see `update`) and ignores `global`.
+     */
+    save: (req: SkillUpsertRequest, options?: SkillCreateOptions) => Promise<Skill>;
     /**
      * #257 — orchestrator graph + tool authoring over a per-tenant apiKey (or
      * adminSecret). All are tenant-scoped via `{ tenantId }`; on an apiKey client
@@ -873,7 +885,7 @@ export class BaoBoxClient {
         delete: (id) => this.deleteScheduledTask(id),
       },
       skills: {
-        upsert: (req) => this.saveSkill(req),
+        upsert: (req, options) => this.saveSkill(req, options),
         setGuardrailDisabled: (id, req) => this.setAdminSkillGuardrails(id, req),
         setGuardSelection: (id, req) => this.setAdminSkillGuardSelection(id, req),
       },
@@ -898,7 +910,7 @@ export class BaoBoxClient {
       get: (id, options) => this.getSkill(id, options),
       create: (req, options) => this.createSkill(req, options),
       update: (id, req, options) => this.updateSkill(id, req, options),
-      save: (req) => this.saveSkill(req),
+      save: (req, options) => this.saveSkill(req, options),
       import: (req, options) => this.importSkill(req, options),
       delete: (id, options) => this.deleteSkill(id, options),
       attachSkill: (parentId, childId, options) =>
@@ -1498,8 +1510,15 @@ export class BaoBoxClient {
     return skill;
   }
 
-  private async saveSkill(req: SkillUpsertRequest): Promise<Skill> {
-    return req.id ? this.updateSkill(req.id, req) : this.createSkill(req);
+  // 0.33.0 — `options` reaches whichever call runs. A create forwards the
+  // whole `SkillCreateOptions` (tenant scope or global opt-in); an update
+  // takes only `tenantId` as its write scope — `global` means nothing there.
+  private async saveSkill(req: SkillUpsertRequest, options?: SkillCreateOptions): Promise<Skill> {
+    if (req.id) {
+      const scope = options?.tenantId !== undefined ? { tenantId: options.tenantId } : undefined;
+      return this.updateSkill(req.id, req, scope);
+    }
+    return this.createSkill(req, options);
   }
 
   // 0.33.0 — import creates a skill, so it takes create's scope choice:

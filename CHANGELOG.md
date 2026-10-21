@@ -49,12 +49,17 @@ global opt-in for creating skills.
   `{ tenantId }` sends `X-BaoBox-Tenant-Id` (import could not be scoped
   before). With neither, the server's 400 surfaces as `BaoBoxError`: the SDK
   never defaults to global.
+- **`skills.save(req, options?)`** and **`admin.skills.upsert(req, options?)`**
+  take the same `SkillCreateOptions`. Creating a new skill (no `req.id`)
+  forwards them like `skills.create`; updating (`req.id` set) uses `tenantId`
+  as the write scope and ignores `global`.
 
 ### Changed
 
 - **Migration note for admin callers:** an `adminSecret` client that called
-  `skills.create(req)` or `skills.import(req)` with no options, intending a
-  global skill, now gets a 400 from current servers. Pass `{ global: true }`
+  `skills.create(req)`, `skills.import(req)`, or `skills.save` /
+  `admin.skills.upsert` for a new skill with no options, intending a global
+  skill, gets a 400 from current servers. Pass `{ global: true }`
   (or `{ tenantId }` for a tenant-owned skill).
 - `skills.update` / `skills.delete` docs: a `{ tenantId }`-scoped write or
   delete of a GLOBAL skill returns 404 on current servers. Only an unscoped

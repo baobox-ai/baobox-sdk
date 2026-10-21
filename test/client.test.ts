@@ -4504,3 +4504,86 @@ describe("skills.create / skills.import scope (#37, 0.33.0)", () => {
     expect(seen[0]?.headers["X-BaoBox-Global"]).toBe("true");
   });
 });
+
+describe("skills.save / admin.skills.upsert scope (#37, 0.33.0)", () => {
+  const rawSkill = {
+    skillId: "sk_1",
+    name: "Chaser",
+    description: "",
+    systemPrompt: "p",
+    model: "m",
+    temperature: 0,
+    maxTokens: 100,
+    sourceUrl: null,
+    tenantId: null,
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-01T00:00:00Z",
+  };
+
+  type Seen = { url: string; method?: string; headers: Record<string, string> };
+
+  function capture(status = 200, responseBody: unknown = { data: rawSkill, metadata: { requestId: "r" } }) {
+    const seen: Seen[] = [];
+    const fetch = fakeFetch((url, init) => {
+      seen.push({ url, method: init.method, headers: init.headers as Record<string, string> });
+      return jsonResponse(status, responseBody);
+    });
+    return { seen, fetch };
+  }
+
+  function admin(fetch: typeof globalThis.fetch) {
+    return new BaoBoxClient({ endpoint: "https://api.example.com", adminSecret: "adm", fetch });
+  }
+
+  const newSkill = { name: "Chaser", systemPrompt: "p" };
+
+  it("save() of a new skill with { global: true } POSTs with X-BaoBox-Global: true", async () => {
+    const { seen, fetch } = capture(201);
+    await admin(fetch).skills.save(newSkill, { global: true });
+    expect(seen[0]?.method).toBe("POST");
+    expect(seen[0]?.url).toBe("https://api.example.com/api/v1/skills");
+    expect(seen[0]?.headers["X-BaoBox-Global"]).toBe("true");
+    expect(seen[0]?.headers["X-BaoBox-Tenant-Id"]).toBeUndefined();
+  });
+
+  it("admin.skills.upsert() of a new skill with { tenantId } POSTs with X-BaoBox-Tenant-Id", async () => {
+    const { seen, fetch } = capture(201);
+    await admin(fetch).admin.skills.upsert(newSkill, { tenantId: "t_acme" });
+    expect(seen[0]?.method).toBe("POST");
+    expect(seen[0]?.headers["X-BaoBox-Tenant-Id"]).toBe("t_acme");
+    expect(seen[0]?.headers["X-BaoBox-Global"]).toBeUndefined();
+  });
+
+  it("admin.skills.upsert() of a new skill with { global: true } POSTs with X-BaoBox-Global: true", async () => {
+    const { seen, fetch } = capture(201);
+    await admin(fetch).admin.skills.upsert(newSkill, { global: true });
+    expect(seen[0]?.headers["X-BaoBox-Global"]).toBe("true");
+  });
+
+  it("save() of a new skill with no options sends no scope header and surfaces the server's 400", async () => {
+    const { seen, fetch } = capture(400, {
+      error: { code: "BAD_REQUEST", message: "Refusing to create a global skill without explicit opt-in.", requestId: "req_400" },
+    });
+    const err = await admin(fetch).skills.save(newSkill).catch((e: unknown) => e);
+    expect(seen[0]?.headers["X-BaoBox-Global"]).toBeUndefined();
+    expect(seen[0]?.headers["X-BaoBox-Tenant-Id"]).toBeUndefined();
+    expect((err as BaoBoxError).status).toBe(400);
+  });
+
+  it("save() of an existing skill ignores `global` and uses tenantId as the write scope", async () => {
+    const { seen, fetch } = capture();
+    await admin(fetch).skills.save({ id: "sk_1", ...newSkill }, { tenantId: "t_acme", global: true });
+    expect(seen[0]?.method).toBe("PUT");
+    expect(seen[0]?.url).toBe("https://api.example.com/api/v1/skills/sk_1");
+    expect(seen[0]?.headers["X-BaoBox-Tenant-Id"]).toBe("t_acme");
+    expect(seen[0]?.headers["X-BaoBox-Global"]).toBeUndefined();
+  });
+
+  it("save() of an existing skill with only { global: true } sends no scope header (unchanged update)", async () => {
+    const { seen, fetch } = capture();
+    await admin(fetch).admin.skills.upsert({ id: "sk_1", ...newSkill }, { global: true });
+    expect(seen[0]?.method).toBe("PUT");
+    expect(seen[0]?.headers["X-BaoBox-Global"]).toBeUndefined();
+    expect(seen[0]?.headers["X-BaoBox-Tenant-Id"]).toBeUndefined();
+  });
+});
