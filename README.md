@@ -190,7 +190,10 @@ Creating a skill (`skills.create`, `skills.import`) on an admin client needs an
 explicit owner (0.33.0+): `{ tenantId }` for a tenant-owned skill, or
 `{ global: true }` (sent as `X-BaoBox-Global: true`) for a platform-global one.
 With neither, the server answers 400 and the SDK throws `BaoBoxError` — it never
-defaults to global.
+defaults to global. Pass one or the other, not both (a type error).
+`skills.save` / `admin.skills.upsert` accept the same options when they create a
+new skill; when they update (`req.id` set), `tenantId` is the write scope and
+`global` is ignored.
 
 ```typescript
 await bb.skills.import({ url: "https://example.com/SKILL.md" }, { tenantId: "t_acme" });
@@ -391,7 +394,8 @@ const skill = await bb.skills.create(
     tools: ["lookup_client_docs"], // SDK convenience: syncs attachments after create
   },
   // An adminSecret client must say who owns the new skill: { tenantId } or,
-  // for a platform-global skill, { global: true }. Neither → 400 (0.33.0+).
+  // for a platform-global skill, { global: true } — not both. Neither → 400
+  // (0.33.0+). skills.save / admin.skills.upsert take the same options.
   { tenantId: "t_123" },
 );
 
@@ -670,7 +674,8 @@ curl -s -H "Authorization: Bearer $BAOBOX_ADMIN_SECRET" \
 - **Shape.** A run is one trace: an `invoke_workflow` root, a `chat` span per
   LLM call, an `execute_tool` span per tool call. A session is one trace per
   request, each rooted at `invoke_agent` with `gen_ai.conversation.id` = the
-  session id.
+  session id, plus one more trace for events recorded without a request id
+  (e.g. Telegram turns).
 - **Content is off by default.** The export carries metadata only: no prompts,
   completions, tool arguments or results, error text, or end-user identity.
   `{ includeContent: true }` (`include_content=1`) adds them, and every such
@@ -700,6 +705,7 @@ res.meta.traceparent;     // "00-4bf92f…4736-<BaoBox span id>-01" (BaoBox's ec
 res.meta.requestIdHeader; // the X-Request-Id response header
 
 for await (const ev of bb.chatStream({
+  sessionId: "ses_1", // needed for the turn to be exportable (see below)
   message: "...",
   traceparent: "00-…-01",
   onResponseMeta: (m) => console.log(m.traceparent, m.requestIdHeader),
@@ -715,8 +721,11 @@ for await (const ev of bb.chatStream({
 - In a session export each request is its own trace. Requests that carried
   the same `traceparent` trace id share that one trace, each as its own
   BaoBox root.
-- Only `chat()`, `chatStream()` and `workflow()` first attempts produce an
-  exportable span under your trace id. An `Idempotency-Key` replay echoes the
+- A `chat()` / `chatStream()` turn with no `sessionId` stores and echoes your
+  trace context but belongs to no session or run, so no export reaches it —
+  pass a `sessionId` when you need it exported.
+- Only `chat()` / `chatStream()` (with a `sessionId`) and `workflow()` first
+  attempts produce an exportable span under your trace id. An `Idempotency-Key` replay echoes the
   replay's own span id, and the export keeps the original attempt's trace.
   The batch workflow API does not take a `traceparent`.
 - Server-to-server only for now: BaoBox's CORS policy does not yet allow a

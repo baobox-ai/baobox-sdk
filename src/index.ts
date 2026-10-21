@@ -546,7 +546,8 @@ export class BaoBoxClient {
      * 0.33.0 — the session's trace as an OpenTelemetry OTLP/JSON
      * `ExportTraceServiceRequest` (admin secret). One trace per request in the
      * session, each with an `invoke_agent` root carrying
-     * `gen_ai.conversation.id` = the session id. Metadata only unless
+     * `gen_ai.conversation.id` = the session id, plus one more trace for
+     * events recorded without a request id (e.g. Telegram turns). Metadata only unless
      * `{ includeContent: true }`. Returned exactly as the server sent it, so it
      * can be POSTed unchanged to a collector's `/v1/traces`.
      * Corresponds to `GET /api/v1/sessions/:id/export?format=otlp`.
@@ -1223,16 +1224,25 @@ export class BaoBoxClient {
       throw new BaoBoxError(0, "NETWORK", "chatStream: response has no body", null, null);
     }
 
-    // 0.33.0 — a stream has no result object, so the response headers'
-    // `X-Request-Id` and `traceparent` echo are reported once, here, before
-    // the first frame.
-    req.onResponseMeta?.(responseHeaderMeta(res));
-
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
 
     try {
+      // 0.33.0 — a stream has no result object, so the response headers'
+      // `X-Request-Id` and `traceparent` echo are reported once, here, before
+      // the first frame. Inside the `try` so the reader is always released; a
+      // throw from the caller's callback cancels the body and ends the stream
+      // with that error.
+      if (req.onResponseMeta) {
+        try {
+          req.onResponseMeta(responseHeaderMeta(res));
+        } catch (err) {
+          await reader.cancel().catch(() => {});
+          throw err;
+        }
+      }
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -2736,10 +2746,12 @@ function tenantScopeHeaders(options?: SkillScopeOptions): Record<string, string>
 }
 
 // 0.33.0 (#37) — the scope headers for a call that CREATES a skill
-// (`skills.create`, `skills.import`): `X-BaoBox-Tenant-Id` for `{ tenantId }`,
-// `X-BaoBox-Global: true` for `{ global: true }`. Both are forwarded as given;
-// the server decides (a tenant scope wins). Neither → no header, and the
-// server's 400 for an unscoped admin create surfaces unchanged.
+// (`skills.create`, `skills.import`, and `skills.save` / `admin.skills.upsert`
+// without `req.id`): `X-BaoBox-Tenant-Id` for `{ tenantId }`,
+// `X-BaoBox-Global: true` for `{ global: true }`. `SkillCreateOptions` makes
+// the two mutually exclusive at the type level. Neither → no header, and the
+// server's 400 for an unscoped admin create surfaces unchanged. (An update via
+// save/upsert never comes here: it takes `tenantId` only, `global` is ignored.)
 function skillCreateHeaders(options?: SkillCreateOptions): Record<string, string> | undefined {
   const headers: Record<string, string> = {
     ...(tenantScopeHeaders(options) ?? {}),

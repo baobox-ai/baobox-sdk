@@ -42,6 +42,9 @@ export type ResponseMeta = {
    * YOUR trace id and BaoBox's own span id for this request, which is the root
    * span of the request's OTLP trace export. W3C defines no response header —
    * this echo is a BaoBox convention; record it as a span link or a lookup key.
+   * A `chat()` / `chatStream()` turn with no `sessionId` stores and echoes
+   * your trace context but belongs to no session or run, so no export reaches
+   * it — pass a `sessionId` when you need it exported.
    */
   traceparent?: string;
 };
@@ -164,6 +167,9 @@ export type ChatRequest = {
    * valid value is stored with the call, the request's OTLP trace export uses
    * your trace id, and the response echoes it in `meta.traceparent`. An invalid
    * value is ignored by the server (never an error) and gets no echo.
+   * A `chat()` / `chatStream()` turn with no `sessionId` stores and echoes
+   * your trace context but belongs to no session or run, so no export reaches
+   * it — pass a `sessionId` when you need it exported.
    */
   traceparent?: string;
 };
@@ -802,18 +808,22 @@ export type SkillScopeOptions = {
 };
 
 /**
- * 0.33.0 — options for the two calls that CREATE a skill: `skills.create` and
- * `skills.import`. The server refuses to create a global skill unless the
- * caller opts in, so an `adminSecret` client must say which it wants:
+ * 0.33.0 — options for the calls that CREATE a skill: `skills.create`,
+ * `skills.import`, and `skills.save` / `admin.skills.upsert` (when `req.id`
+ * is absent). The server refuses to create a global skill unless the caller
+ * opts in, so an `adminSecret` client must say which it wants — exactly one:
  * - `{ tenantId }` — a skill owned by that tenant (`X-BaoBox-Tenant-Id`);
  * - `{ global: true }` — a platform-global skill (`X-BaoBox-Global: true`).
- * With neither, the server answers 400 and the SDK surfaces it as
- * `BaoBoxError`; the SDK never defaults to global. An `apiKey` client needs
- * neither: the key's tenant owns the skill.
+ * Passing both is a type error. With neither (`{}` or no options), the server
+ * answers 400 and the SDK surfaces it as `BaoBoxError`; the SDK never defaults
+ * to global. An `apiKey` client needs neither: the key's tenant owns the skill.
+ * When `skills.save` / `admin.skills.upsert` UPDATE (`req.id` set), `tenantId`
+ * is the write scope and `global` is ignored.
  */
-export type SkillCreateOptions = SkillScopeOptions & {
-  global?: true;
-};
+export type SkillCreateOptions =
+  | { tenantId: string; global?: never }
+  | { global: true; tenantId?: never }
+  | { tenantId?: never; global?: never };
 
 export type SkillUpsertRequest = SkillCreateRequest & {
   id?: string;
@@ -1875,7 +1885,8 @@ export type ChatStreamRequest = {
    * 0.33.0 — called once with the response headers' `X-Request-Id` and
    * `traceparent` echo, when the stream's 2xx response arrives and before the
    * first frame is yielded. Not called when the request fails (the iterator
-   * throws `BaoBoxError` instead).
+   * throws `BaoBoxError` instead). A throw from the callback ends the stream
+   * with that error (the response body is cancelled).
    */
   onResponseMeta?: (meta: StreamResponseMeta) => void;
 };

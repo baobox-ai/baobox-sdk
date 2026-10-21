@@ -26,7 +26,9 @@ global opt-in for creating skills.
   when given. A valid value is stored with the call: the request's OTLP export
   then uses your trace id, and its root span names your span as its parent.
   The SDK does not validate the value; the server ignores an invalid one
-  (never an error).
+  (never an error). A `chat()` / `chatStream()` turn with no `sessionId`
+  stores and echoes your trace context but belongs to no session or run, so
+  no export reaches it — pass a `sessionId` when you need it exported.
 - **Response-header meta.** `ResponseMeta` gains two optional fields, read from
   the response headers of every enveloped call:
   - `traceparent` — BaoBox's echo (`00-<your trace id>-<BaoBox span id>-<flags>`),
@@ -41,14 +43,16 @@ global opt-in for creating skills.
 - **`ChatStreamRequest.onResponseMeta(meta)`** — a stream has no result object,
   so `chatStream()` reports the same two header fields
   (`StreamResponseMeta`) through this callback once the 2xx response arrives,
-  before the first frame. It is not called when the request fails.
+  before the first frame. It is not called when the request fails; a throw
+  from the callback ends the stream with that error.
 - **`skills.create(req, { global: true })`** and
   **`skills.import(req, { tenantId } | { global: true })`** (new
   `SkillCreateOptions`). The server refuses to create a global skill unless the
   caller opts in; `{ global: true }` sends `X-BaoBox-Global: true`, and
   `{ tenantId }` sends `X-BaoBox-Tenant-Id` (import could not be scoped
-  before). With neither, the server's 400 surfaces as `BaoBoxError`: the SDK
-  never defaults to global.
+  before). Pass one or the other: `SkillCreateOptions` is a union, so passing
+  both is a type error. With neither, the server's 400 surfaces as
+  `BaoBoxError`: the SDK never defaults to global.
 - **`skills.save(req, options?)`** and **`admin.skills.upsert(req, options?)`**
   take the same `SkillCreateOptions`. Creating a new skill (no `req.id`)
   forwards them like `skills.create`; updating (`req.id` set) uses `tenantId`

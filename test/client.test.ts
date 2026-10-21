@@ -19,6 +19,7 @@ import type {
   DecisionSkillOutput,
   DecisionSkillSpec,
   EvalRunResultScores,
+  SkillCreateOptions,
 } from "../src/index.js";
 
 function fakeFetch(handler: (url: string, init: RequestInit) => Response) {
@@ -4284,13 +4285,16 @@ describe("traceparent passthrough (0.33.0)", () => {
 
   it("workflow() sends the traceparent header and surfaces the echo", async () => {
     let seen: Record<string, string> = {};
+    let seenBody = "";
     const fetch = fakeFetch((_url, init) => {
       seen = headersOf(init);
+      seenBody = String(init.body);
       return envelopeResponse(workflowData, { traceparent: TP_ECHO, "x-request-id": "req_hdr" });
     });
     const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
     const res = await bb.workflow({ ...workflowReq, traceparent: TP_IN });
     expect(seen.traceparent).toBe(TP_IN);
+    expect(JSON.parse(seenBody)).not.toHaveProperty("traceparent");
     expect(res.meta.traceparent).toBe(TP_ECHO);
     expect(res.meta.requestIdHeader).toBe("req_hdr");
   });
@@ -4338,9 +4342,11 @@ describe("traceparent passthrough (0.33.0)", () => {
 
   it("chatStream() sends the header and reports the echo via onResponseMeta before the first frame", async () => {
     let seen: Record<string, string> = {};
+    let seenBody = "";
     const order: string[] = [];
     const fetch = fakeFetch((_url, init) => {
       seen = headersOf(init);
+      seenBody = String(init.body);
       return new Response("event: done\ndata: {\"session_id\":\"s\"}\n\n", {
         status: 200,
         headers: { "content-type": "text/event-stream", traceparent: TP_ECHO, "x-request-id": "req_stream" },
@@ -4359,6 +4365,9 @@ describe("traceparent passthrough (0.33.0)", () => {
       order.push(ev.event);
     }
     expect(seen.traceparent).toBe(TP_IN);
+    const sentBody = JSON.parse(seenBody) as Record<string, unknown>;
+    expect(sentBody).not.toHaveProperty("traceparent");
+    expect(sentBody).not.toHaveProperty("onResponseMeta");
     expect(meta).toEqual({ requestIdHeader: "req_stream", traceparent: TP_ECHO });
     expect(order).toEqual(["meta", "done"]);
   });
@@ -4381,6 +4390,44 @@ describe("traceparent passthrough (0.33.0)", () => {
     expect(Object.keys(seen)).not.toContain("traceparent");
     expect(meta).toEqual({});
     expect(events).toEqual(["done"]);
+  });
+
+  it("chatStream(): a throwing onResponseMeta cancels the body and rethrows the consumer's error", async () => {
+    let cancelled = false;
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new TextEncoder().encode("event: done\ndata: {}\n\n"));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const fetch = fakeFetch(
+      () => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }),
+    );
+    const bb = new BaoBoxClient({ endpoint: "https://api.example.com", apiKey: "k", fetch });
+    const boom = new Error("consumer bug");
+    const events: string[] = [];
+    const run = async () => {
+      for await (const ev of bb.chatStream({
+        message: "hi",
+        onResponseMeta: () => {
+          throw boom;
+        },
+      })) {
+        events.push(ev.event);
+      }
+    };
+    await expect(run()).rejects.toBe(boom);
+    expect(events).toEqual([]);
+    expect(cancelled).toBe(true);
+    // No frame was read before the callback ran (the stream may have
+    // pre-pulled once to fill its queue, but nothing reached the consumer).
+    expect(pulled).toBeLessThanOrEqual(1);
+    // The reader lock was released (finally ran): the body is not locked.
+    expect(body.locked).toBe(false);
   });
 
   it("chatStream() does not call onResponseMeta when the request fails", async () => {
@@ -4497,11 +4544,17 @@ describe("skills.create / skills.import scope (#37, 0.33.0)", () => {
     expect((err as BaoBoxError).status).toBe(400);
   });
 
-  it("forwards both headers as given when both are passed (the server's tenant scope wins)", async () => {
-    const { seen, fetch } = capture();
-    await admin(fetch).skills.create(createReq, { tenantId: "t_acme", global: true });
-    expect(seen[0]?.headers["X-BaoBox-Tenant-Id"]).toBe("t_acme");
-    expect(seen[0]?.headers["X-BaoBox-Global"]).toBe("true");
+  it("SkillCreateOptions: tenantId and global are mutually exclusive at the type level", () => {
+    // Type test: the assignments below are checked by `tsc` (npm run typecheck
+    // includes test/). Exactly one of tenantId / global, or neither.
+    const scoped: SkillCreateOptions = { tenantId: "t_acme" };
+    const global: SkillCreateOptions = { global: true };
+    const neither: SkillCreateOptions = {};
+    // @ts-expect-error — passing both is a type error.
+    const both: SkillCreateOptions = { tenantId: "t_acme", global: true };
+    // @ts-expect-error — `global` is the literal `true`, not any boolean.
+    const globalFalse: SkillCreateOptions = { global: false };
+    expect([scoped, global, neither, both, globalFalse]).toHaveLength(5);
   });
 });
 
@@ -4570,9 +4623,9 @@ describe("skills.save / admin.skills.upsert scope (#37, 0.33.0)", () => {
     expect((err as BaoBoxError).status).toBe(400);
   });
 
-  it("save() of an existing skill ignores `global` and uses tenantId as the write scope", async () => {
+  it("save() of an existing skill uses tenantId as the write scope", async () => {
     const { seen, fetch } = capture();
-    await admin(fetch).skills.save({ id: "sk_1", ...newSkill }, { tenantId: "t_acme", global: true });
+    await admin(fetch).skills.save({ id: "sk_1", ...newSkill }, { tenantId: "t_acme" });
     expect(seen[0]?.method).toBe("PUT");
     expect(seen[0]?.url).toBe("https://api.example.com/api/v1/skills/sk_1");
     expect(seen[0]?.headers["X-BaoBox-Tenant-Id"]).toBe("t_acme");
