@@ -821,9 +821,10 @@ export type SkillScopeOptions = {
  * is the write scope and `global` is ignored.
  */
 export type SkillCreateOptions =
-  | { tenantId: string; global?: never }
-  | { global: true; tenantId?: never }
-  | { tenantId?: never; global?: never };
+  // `tenantId` stays optional here so 0.32.1 callers passing a
+  // `SkillScopeOptions` (or `{ tenantId: string | undefined }`) still compile.
+  | { tenantId?: string; global?: never }
+  | { global: true; tenantId?: never };
 
 export type SkillUpsertRequest = SkillCreateRequest & {
   id?: string;

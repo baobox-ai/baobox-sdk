@@ -20,6 +20,7 @@ import type {
   DecisionSkillSpec,
   EvalRunResultScores,
   SkillCreateOptions,
+  SkillScopeOptions,
 } from "../src/index.js";
 
 function fakeFetch(handler: (url: string, init: RequestInit) => Response) {
@@ -4555,6 +4556,16 @@ describe("skills.create / skills.import scope (#37, 0.33.0)", () => {
     // @ts-expect-error — `global` is the literal `true`, not any boolean.
     const globalFalse: SkillCreateOptions = { global: false };
     expect([scoped, global, neither, both, globalFalse]).toHaveLength(5);
+  });
+
+  it("SkillCreateOptions stays assignable from the 0.32.1 SkillScopeOptions shapes (semver-minor)", () => {
+    // 0.32.1's skills.create took `options?: SkillScopeOptions`; these must
+    // still type-check against the 0.33.0 union.
+    const scope: SkillScopeOptions = {};
+    const maybeTenant: string | undefined = undefined;
+    const fromScope: SkillCreateOptions = scope;
+    const fromMaybe: SkillCreateOptions = { tenantId: maybeTenant };
+    expect([fromScope, fromMaybe]).toHaveLength(2);
   });
 });
 
